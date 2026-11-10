@@ -1,22 +1,22 @@
 # Spore Designer
 
+| Penicillium | Rhizopus | Fluffy | Annihilation |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/presets/penicillium.png" width="200" alt="Penicillium: velvety blue-green colony with radial furrows and amber droplets"> | <img src="docs/presets/rhizopus.png" width="200" alt="Rhizopus: white cotton with black spore heads"> | <img src="docs/presets/fluffy.png" width="200" alt="Fluffy: soft white cotton with long hyphae"> | <img src="docs/presets/annihilation.png" width="200" alt="Annihilation: pink, ochre and teal lichen rosettes on a violet body"> |
+
 Design procedural moulds by twiddling parameters, from plain fluff to lurid lichen blooms.
 The painters started as the Penicillium and Rhizopus colonies of
 [Sporagon](https://github.com/sunsided/sporagon), generalised into one layered generator.
 
 ![A design in the endless field, lit by the cursor light at relief 3.8](docs/screenshot.jpg)
 
+The colonies above are the four presets, fully grown (`task docs:presets` renders them).
+
 - `crates/spore-core`: pure painter (`MoldParams`, seed, growth → RGBA sprite). No platform
   dependencies; builds for `wasm32-unknown-unknown`.
 - `crates/spore-designer`: desktop editor on [game-toolkit](https://game-toolkit.dev/) + egui.
   Presets, live sliders, "randomize everything", growth playback, RON save/load, PNG and
   sprite-sheet export.
-
-The presets, each as one fully grown colony (`task docs:presets` renders these):
-
-| Penicillium | Rhizopus | Fluffy | Annihilation |
-|:-:|:-:|:-:|:-:|
-| <img src="docs/presets/penicillium.png" width="200" alt="Penicillium: velvety blue-green colony with radial furrows and amber droplets"> | <img src="docs/presets/rhizopus.png" width="200" alt="Rhizopus: white cotton with black spore heads"> | <img src="docs/presets/fluffy.png" width="200" alt="Fluffy: soft white cotton with long hyphae"> | <img src="docs/presets/annihilation.png" width="200" alt="Annihilation: pink, ochre and teal lichen rosettes on a violet body"> |
 
 Three views:
 
