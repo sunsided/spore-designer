@@ -136,34 +136,62 @@ pub(crate) fn paint(p: &MoldParams, seed: u32, g: f32, size: usize) -> Rgba {
     img
 }
 
-/// Several colonies scattered over a square `patch.area` colony widths wide, growing at
-/// staggered times. Their puddles share one metaball field and run together.
-pub(crate) fn paint_patch(p: &MoldParams, patch: &Patch, seed: u32, g: f32, size: usize) -> Rgba {
-    let extent = REFERENCE_SIZE as f32 * patch.area.max(1.0);
-    let s = size as f32 / extent;
-    // Colonies stay at least `margin` inside the area; whatever reaches further gets padding.
-    // The layout does not depend on `g`, so the grown layout bounds every stage.
-    let margin = reach(p).min(extent * 0.5);
-    let grown = place(patch, seed, extent, margin, 1.0);
-    let pad = (overflow(p, &grown, extent, reach(p) - margin) * s).ceil() as usize;
-    let mut img = Rgba::new(size + 2 * pad);
-    let offset = pad as f32 / s;
-    let colonies: Vec<_> = place(patch, seed, extent, margin, g)
-        .into_iter()
-        .map(|(x, y, g, seed)| (x + offset, y + offset, g, seed))
-        .collect();
-    if p.slime.enabled {
-        let balls: Vec<_> = colonies
-            .iter()
-            .flat_map(|&(x, y, g, seed)| slime::puddle(&p.slime, x, y, g, seed))
+/// Where a patch's colonies sit and how much padding its image needs. Neither depends on the
+/// growth stage, so it is worked out once per sheet (the padding scans the grown puddle).
+pub struct PatchLayout {
+    patch: Patch,
+    seed: u32,
+    size: usize,
+    extent: f32,
+    margin: f32,
+    pad: usize,
+}
+
+impl PatchLayout {
+    pub fn new(p: &MoldParams, patch: &Patch, seed: u32, size: usize) -> Self {
+        let size = size.max(1);
+        let extent = REFERENCE_SIZE as f32 * patch.area.max(1.0);
+        let s = size as f32 / extent;
+        // Colonies stay at least `margin` inside the area; whatever reaches further gets
+        // padding. The grown layout bounds every stage.
+        let margin = reach(p).min(extent * 0.5);
+        let grown = place(patch, seed, extent, margin, 1.0);
+        let pad = (overflow(p, &grown, extent, reach(p) - margin) * s).ceil() as usize;
+        Self {
+            patch: patch.clone(),
+            seed,
+            size,
+            extent,
+            margin,
+            pad,
+        }
+    }
+
+    /// The patch at overall growth `g`: several colonies scattered over a square
+    /// `patch.area` colony widths wide, growing at staggered times. Their puddles share one
+    /// metaball field and run together. `p` must be the design the layout was made for.
+    pub fn render(&self, p: &MoldParams, g: f32) -> Rgba {
+        let g = g.clamp(0.0, 1.0);
+        let s = self.size as f32 / self.extent;
+        let mut img = Rgba::new(self.size + 2 * self.pad);
+        let offset = self.pad as f32 / s;
+        let colonies: Vec<_> = place(&self.patch, self.seed, self.extent, self.margin, g)
+            .into_iter()
+            .map(|(x, y, g, seed)| (x + offset, y + offset, g, seed))
             .collect();
-        slime::paint(&p.slime, &balls, s, None, &mut img);
+        if p.slime.enabled {
+            let balls: Vec<_> = colonies
+                .iter()
+                .flat_map(|&(x, y, g, seed)| slime::puddle(&p.slime, x, y, g, seed))
+                .collect();
+            slime::paint(&p.slime, &balls, s, None, &mut img);
+        }
+        bodies(p, s, &colonies, &mut img);
+        for &(x, y, g, seed) in &colonies {
+            overlays(p, seed, g, s, (x, y), &mut img);
+        }
+        img
     }
-    bodies(p, s, &colonies, &mut img);
-    for &(x, y, g, seed) in &colonies {
-        overlays(p, seed, g, s, (x, y), &mut img);
-    }
-    img
 }
 
 /// Side of a field chunk in reference pixels (two cells).

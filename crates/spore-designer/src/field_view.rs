@@ -106,8 +106,22 @@ impl FieldView {
             }
         }
         if self.bytes > CACHE_BYTES {
-            self.cache.retain(|k, _| wanted.contains(k));
-            self.bytes = self.cache.values().map(Vec::len).sum();
+            // Drop off-screen chunks first, then the stages needed furthest in the future
+            // (playback runs forward), until the cache fits; on-screen ones stay.
+            let on_screen: HashSet<(i32, i32)> = wanted.iter().map(|k| (k.0, k.1)).collect();
+            let ahead = |k: &Key| (k.2 + d.stages - stage) % d.stages.max(1);
+            let mut keys: Vec<Key> = self.cache.keys().copied().collect();
+            keys.sort_by_key(|k| (on_screen.contains(&(k.0, k.1)), std::cmp::Reverse(ahead(k))));
+            for k in keys {
+                if self.bytes <= CACHE_BYTES {
+                    break;
+                }
+                if !wanted.contains(&k)
+                    && let Some(px) = self.cache.remove(&k)
+                {
+                    self.bytes -= px.len();
+                }
+            }
         }
 
         // Start missing chunks, nearest to the view centre first.

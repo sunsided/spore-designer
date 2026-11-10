@@ -22,11 +22,14 @@ pub fn render(p: &MoldParams, seed: u32, g: f32, size: usize) -> Rgba {
     layers::paint(p, seed, g.clamp(0.0, 1.0), size.max(1))
 }
 
-/// Paint a patch of several colonies growing together at overall growth `g` into a
-/// `size`-pixel square.
+/// Paint a patch of several colonies growing together at overall growth `g`, `size` pixels
+/// across the patch area (plus padding, as for [`render`]). For several stages of one patch,
+/// build a [`PatchLayout`] once and paint each stage from it.
 pub fn render_patch(p: &MoldParams, patch: &Patch, seed: u32, g: f32, size: usize) -> Rgba {
-    layers::paint_patch(p, patch, seed, g.clamp(0.0, 1.0), size.max(1))
+    PatchLayout::new(p, patch, seed, size).render(p, g)
 }
+
+pub use layers::PatchLayout;
 
 /// Chunk `(cx, cy)` of an endless field of colonies at overall growth `g`, `size` pixels per
 /// cell. Chunks are [`CHUNK_CELLS`] cells square and tile seamlessly: the chunk at `(cx, cy)`
@@ -50,25 +53,21 @@ pub fn stage_growth(i: usize, stages: usize) -> f32 {
     (i + 1) as f32 / stages.max(1) as f32
 }
 
-/// All growth stages side by side as one straight-alpha RGBA8 image, `size * stages` wide.
-pub fn render_sheet(p: &MoldParams, seed: u32, stages: usize, size: usize) -> Vec<u8> {
-    let frames: Vec<Rgba> = (0..stages)
-        .map(|i| render(p, seed, stage_growth(i, stages), size))
-        .collect();
-    sheet(&frames)
-}
-
-/// Lay equally sized frames out in one row as straight-alpha RGBA8.
-pub fn sheet(frames: &[Rgba]) -> Vec<u8> {
+/// Lay equally sized frames out as straight-alpha RGBA8, `cols` per row (rows fill up from
+/// the top left; a short last row is transparent). The image is `cols * w` wide.
+pub fn sheet(frames: &[Rgba], cols: usize) -> Vec<u8> {
     let Some(first) = frames.first() else {
         return Vec::new();
     };
-    let w = first.w;
-    let rows: Vec<Vec<u8>> = frames.iter().map(Rgba::to_rgba8).collect();
-    let mut out = Vec::with_capacity(rows.len() * w * w * 4);
-    for y in 0..w {
-        for row in &rows {
-            out.extend_from_slice(&row[y * w * 4..(y + 1) * w * 4]);
+    let (w, cols) = (first.w, cols.clamp(1, frames.len()));
+    let rows = frames.len().div_ceil(cols);
+    let mut out = vec![0; rows * cols * w * w * 4];
+    for (i, f) in frames.iter().enumerate() {
+        let px = f.to_rgba8();
+        let (fx, fy) = (i % cols * w, i / cols * w);
+        for y in 0..w {
+            let at = ((fy + y) * cols * w + fx) * 4;
+            out[at..at + w * 4].copy_from_slice(&px[y * w * 4..(y + 1) * w * 4]);
         }
     }
     out
@@ -164,12 +163,28 @@ mod tests {
     }
 
     #[test]
+    fn sheet_wraps_into_rows() {
+        let p = presets::penicillium();
+        let frames: Vec<Rgba> = (0..3)
+            .map(|i| render(&p, 1, 0.3 + 0.3 * i as f32, 8))
+            .collect();
+        let w = frames[0].w;
+        let s = sheet(&frames, 2);
+        // Two columns, two rows; frame 2 starts the second row, the last cell stays empty.
+        assert_eq!(s.len(), 2 * w * 2 * w * 4);
+        let row =
+            |y: usize, col: usize| &s[(y * 2 * w + col * w) * 4..(y * 2 * w + (col + 1) * w) * 4];
+        assert_eq!(row(w, 0), &frames[2].to_rgba8()[..w * 4]);
+        assert!(row(w, 1).iter().all(|&b| b == 0));
+    }
+
+    #[test]
     fn sheet_layout() {
         let p = presets::penicillium();
         let frames = [render(&p, 1, 0.3, 8), render(&p, 1, 1.0, 8)];
         let w = frames[0].w;
         assert_eq!(frames[1].w, w, "stages of one design share a size");
-        let s = sheet(&frames);
+        let s = sheet(&frames, 2);
         assert_eq!(s.len(), 2 * w * w * 4);
         // Row 3 of the sheet: frame 0's row 3, then frame 1's row 3.
         let (row, out) = (w * 4, 2 * w * 4);

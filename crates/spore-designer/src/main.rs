@@ -11,8 +11,10 @@ use std::path::Path;
 
 use game_toolkit::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::mpsc::{Receiver, Sender, channel};
+
 use spore_core::{
-    Field, MoldParams, Patch, Rgb, Rgba, presets, render, render_patch, sheet, stage_growth,
+    Field, MoldParams, Patch, PatchLayout, Rgb, Rgba, presets, render, sheet, stage_growth,
 };
 
 use field_view::FieldView;
@@ -45,13 +47,28 @@ pub struct Design {
 }
 
 impl Design {
-    /// One stage at growth `g`: a patch in the patch view, else a lone colony (the field
-    /// view paints its own chunks).
-    pub fn paint(&self, g: f32) -> Rgba {
-        match self.view {
-            View::Patch => render_patch(&self.mold, &self.patch, self.seed, g, self.size),
-            View::Colony | View::Field => render(&self.mold, self.seed, g, self.size),
-        }
+    /// Every growth stage, one thread each: a patch in the patch view, else a lone colony
+    /// (the field view paints its own chunks).
+    pub fn frames(&self) -> Vec<Rgba> {
+        let layout = (self.view == View::Patch)
+            .then(|| PatchLayout::new(&self.mold, &self.patch, self.seed, self.size));
+        let layout = layout.as_ref();
+        std::thread::scope(|s| {
+            let jobs: Vec<_> = (0..self.stages)
+                .map(|i| {
+                    s.spawn(move || {
+                        let g = stage_growth(i, self.stages);
+                        match layout {
+                            Some(l) => l.render(&self.mold, g),
+                            None => render(&self.mold, self.seed, g, self.size),
+                        }
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().expect("painter panicked"))
+                .collect()
+        })
     }
 }
 
@@ -80,13 +97,20 @@ pub enum Action {
     ExportSheet,
 }
 
+/// Painted stages and the design they show.
+type Sheet = (Design, Vec<Rgba>);
+
 struct App {
     ui: Ui,
     ed: Editor,
     /// The design `frames` were painted from.
     painted: Option<Design>,
     frames: Vec<Rgba>,
-    texture: Option<(TextureId, [u32; 2])>,
+    /// Stages painted off the UI thread: the design being painted, and where results land.
+    painting: Option<Design>,
+    sheets: (Sender<Sheet>, Receiver<Sheet>),
+    /// The stages as one texture, its size, and stages per texture row.
+    texture: Option<(TextureId, [u32; 2], usize)>,
     field: FieldView,
     /// A drag in the field view started on the preview (not on the panel).
     dragging: bool,
@@ -122,6 +146,8 @@ impl Game for App {
             },
             painted: None,
             frames: Vec::new(),
+            painting: None,
+            sheets: channel(),
             texture: None,
             field: FieldView::default(),
             dragging: false,
@@ -161,7 +187,7 @@ impl Game for App {
 
     fn render(&mut self, ctx: &mut Context, frame: &mut Frame) {
         // The field view paints its own chunks in the background.
-        if self.ed.design.view != View::Field && self.painted.as_ref() != Some(&self.ed.design) {
+        if self.ed.design.view != View::Field {
             self.repaint(&mut ctx.gfx);
         }
         self.draw_preview(&mut ctx.gfx, frame);
@@ -189,31 +215,49 @@ impl Game for App {
 }
 
 impl App {
-    /// Paint every stage (one thread each) and upload them as one sheet texture.
+    /// Keep the stage sheet in step with the design without blocking the frame: show the
+    /// newest finished stages, and while the design differs from them, paint it on a worker
+    /// (one at a time; the latest design wins).
     fn repaint(&mut self, gfx: &mut Graphics) {
-        let d = &self.ed.design;
-        self.frames = std::thread::scope(|s| {
-            let jobs: Vec<_> = (0..d.stages)
-                .map(|i| s.spawn(move || d.paint(stage_growth(i, d.stages))))
-                .collect();
-            jobs.into_iter()
-                .map(|j| j.join().expect("painter panicked"))
-                .collect()
-        });
-        let pixels = sheet(&self.frames);
+        while let Ok((d, frames)) = self.sheets.1.try_recv() {
+            self.painting = None;
+            self.upload(gfx, d, frames);
+        }
+        if self.painting.is_none() && self.painted.as_ref() != Some(&self.ed.design) {
+            let (d, tx) = (self.ed.design.clone(), self.sheets.0.clone());
+            self.painting = Some(d.clone());
+            std::thread::spawn(move || {
+                let frames = d.frames();
+                // The app may be closing; nothing to do then.
+                let _ = tx.send((d, frames));
+            });
+        }
+    }
+
+    /// Upload painted stages as one texture, wrapped into rows so it stays within the GPU's
+    /// largest texture.
+    fn upload(&mut self, gfx: &mut Graphics, d: Design, frames: Vec<Rgba>) {
         // Frames are padded past the cell when the design grows out of it.
-        let fw = self.frames[0].w;
-        let dims = [(fw * d.stages) as u32, fw as u32];
+        let fw = frames[0].w;
+        let max = gfx.device().limits().max_texture_dimension_2d as usize;
+        let cols = (max / fw).clamp(1, frames.len());
+        let rows = frames.len().div_ceil(cols);
+        let pixels = sheet(&frames, cols);
+        let dims = [(fw * cols) as u32, (fw * rows) as u32];
         match self.texture {
-            Some((id, size)) if size == dims => gfx.update_texture_rgba(id, &pixels),
+            Some((id, size, _)) if size == dims => {
+                gfx.update_texture_rgba(id, &pixels);
+                self.texture = Some((id, dims, cols));
+            }
             // shortcut: the old texture is not freed (the toolkit has no release call); only
             // size/stage-count changes leak, fine for an editor session.
             _ => {
                 let id = gfx.create_texture_rgba(dims[0], dims[1], &pixels, Some("sheet"));
-                self.texture = Some((id, dims));
+                self.texture = Some((id, dims, cols));
             }
         }
-        self.painted = Some(d.clone());
+        self.frames = frames;
+        self.painted = Some(d);
     }
 
     fn draw_preview(&mut self, gfx: &mut Graphics, frame: &mut Frame) {
@@ -242,9 +286,11 @@ impl App {
         }
         let mut p = frame.painter(gfx);
         p.clear([bg[0], bg[1], bg[2], 1.0]);
-        let Some((tex, [_, fw])) = self.texture else {
+        let Some((tex, _, cols)) = self.texture else {
             return;
         };
+        let fw = self.frames[0].w;
+        let src = |i: usize| [(i % cols * fw) as f32, (i / cols * fw) as f32];
         let d = self.painted.as_ref().unwrap_or(&self.ed.design);
         let size = fw as f32;
         let (x0, area_w) = (self.panel_px, (w - self.panel_px).max(1.0));
@@ -255,15 +301,9 @@ impl App {
         let side = (area_w.min(main_h) * 0.92).max(1.0);
         let stage = (self.ed.stage as usize).min(d.stages - 1);
         let (px, py) = (x0 + (area_w - side) * 0.5, (main_h - side) * 0.5);
-        p.sprite_region(
-            tex,
-            [stage as f32 * size, 0.0],
-            [size, size],
-            [px, py],
-            [side, side],
-        );
+        p.sprite_region(tex, src(stage), [size, size], [px, py], [side, side]);
         // Outline the cell (or patch area) when the growth spills out of it.
-        if fw as usize > d.size {
+        if fw > d.size {
             let cell = side * d.size as f32 / size;
             let (cx, cy) = (px + (side - cell) * 0.5, py + (side - cell) * 0.5);
             let line = [1.0, 1.0, 1.0, 0.25];
@@ -283,7 +323,10 @@ impl App {
             [cell, cell],
             [1.0, 1.0, 1.0, 0.08],
         );
-        p.sprite(tex, [sx, sy], [strip_w, cell]);
+        for i in 0..d.stages {
+            let at = [sx + i as f32 * cell, sy];
+            p.sprite_region(tex, src(i), [size, size], at, [cell, cell]);
+        }
     }
 
     fn run(&mut self, action: Action) -> std::result::Result<String, String> {
@@ -310,8 +353,8 @@ impl App {
                 };
                 let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
                 let mut design: Design = ron::from_str(&text).map_err(|e| e.to_string())?;
-                design.size = design.size.clamp(16, 1024);
-                design.stages = design.stages.clamp(1, 32);
+                // A file is untrusted: bring every value into its slider's range.
+                controls::sanitize(&mut design);
                 self.ed.design = design;
                 Ok(format!("Loaded {}", path.display()))
             }
@@ -339,7 +382,8 @@ impl App {
                     return cancelled();
                 };
                 let w = self.frames.first().map_or(0, |f| f.w);
-                save_png(&path, &sheet(&self.frames), w * self.frames.len(), w)
+                let n = self.frames.len();
+                save_png(&path, &sheet(&self.frames, n), w * n, w)
             }
         }
     }
@@ -379,16 +423,14 @@ mod tests {
         let text = ron::ser::to_string_pretty(&design, ron::ser::PrettyConfig::default()).unwrap();
         assert!(ron::from_str::<Design>(&text).unwrap() == design);
 
-        let frames: Vec<Rgba> = (0..design.stages)
-            .map(|i| design.paint(stage_growth(i, design.stages)))
-            .collect();
+        let frames = design.frames();
         let path = std::env::temp_dir().join(format!("spore-sheet-{}.png", std::process::id()));
         let w = frames[0].w;
         assert!(w >= 32, "frames are at least one cell");
-        save_png(&path, &sheet(&frames), w * 3, w).unwrap();
+        save_png(&path, &sheet(&frames, 3), w * 3, w).unwrap();
         let back = image::open(&path).unwrap().into_rgba8();
         std::fs::remove_file(&path).ok();
         assert_eq!(back.dimensions(), (w as u32 * 3, w as u32));
-        assert_eq!(back.as_raw(), &sheet(&frames));
+        assert_eq!(back.as_raw(), &sheet(&frames, 3));
     }
 }

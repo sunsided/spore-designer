@@ -7,9 +7,9 @@ use std::ops::RangeInclusive;
 
 use game_toolkit::prelude::egui;
 use spore_core::noise::Rng;
-use spore_core::{ColorStop, MoldParams, Rgb, presets};
+use spore_core::{ColorStop, Field, MoldParams, Patch, Rgb, presets};
 
-use crate::{Action, Editor, View};
+use crate::{Action, Design, Editor, View};
 
 /// Something that visits every editable field of a mould.
 pub trait Form {
@@ -69,8 +69,8 @@ pub fn panel(ui: &mut egui::Ui, ed: &mut Editor, status: &str) -> Option<Action>
             d.seed = d.seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453) >> 8;
         }
     });
-    ui.add(egui::Slider::new(&mut d.size, 32..=512).text("size px"));
-    ui.add(egui::Slider::new(&mut d.stages, 1..=24).text("stages"));
+    ui.add(egui::Slider::new(&mut d.size, SIZES).text("size px"));
+    ui.add(egui::Slider::new(&mut d.stages, STAGES).text("stages"));
 
     ui.horizontal(|ui| {
         let label = if ed.playing { "Pause" } else { "Play" };
@@ -98,18 +98,9 @@ pub fn panel(ui: &mut egui::Ui, ed: &mut Editor, status: &str) -> Option<Action>
     });
     match d.view {
         View::Colony => {}
-        View::Patch => {
-            let p = &mut d.patch;
-            form.int("colonies", &mut p.count, 1..=40);
-            form.float("area (colony widths)", &mut p.area, 1.0..=6.0);
-            form.float("stagger", &mut p.stagger, 0.0..=0.95);
-        }
+        View::Patch => patch(&mut form, &mut d.patch),
         View::Field => {
-            let f = &mut d.field;
-            form.float("spacing (colony widths)", &mut f.spacing, 0.4..=3.0);
-            form.float("jitter", &mut f.jitter, 0.0..=1.0);
-            form.float("density", &mut f.density, 0.0..=1.0);
-            form.float("stagger", &mut f.stagger, 0.0..=0.95);
+            field(&mut form, &mut d.field);
             form.float("pan speed (px/s)", &mut ed.pan_speed, 0.0..=400.0);
             form.float("pan direction (deg)", &mut ed.pan_angle, 0.0..=360.0);
             form.ui.small("Drag the preview to move around.");
@@ -118,6 +109,32 @@ pub fn panel(ui: &mut egui::Ui, ed: &mut Editor, status: &str) -> Option<Action>
     form.ui.separator();
     mold(&mut form, &mut d.mold);
     action
+}
+
+const SIZES: RangeInclusive<usize> = 32..=512;
+const STAGES: RangeInclusive<usize> = 1..=24;
+
+/// Bring every value of a design from outside (a loaded file) into its slider's range, so
+/// absurd values cannot exhaust memory or hang the painter.
+pub fn sanitize(d: &mut Design) {
+    d.size = d.size.clamp(*SIZES.start(), *SIZES.end());
+    d.stages = d.stages.clamp(*STAGES.start(), *STAGES.end());
+    mold(&mut Clamp, &mut d.mold);
+    patch(&mut Clamp, &mut d.patch);
+    field(&mut Clamp, &mut d.field);
+}
+
+fn patch(f: &mut dyn Form, p: &mut Patch) {
+    f.int("colonies", &mut p.count, 1..=40);
+    f.float("area (colony widths)", &mut p.area, 1.0..=6.0);
+    f.float("stagger", &mut p.stagger, 0.0..=0.95);
+}
+
+fn field(f: &mut dyn Form, x: &mut Field) {
+    f.float("spacing (colony widths)", &mut x.spacing, 0.4..=3.0);
+    f.float("jitter", &mut x.jitter, 0.0..=1.0);
+    f.float("density", &mut x.density, 0.0..=1.0);
+    f.float("stagger", &mut x.stagger, 0.0..=0.95);
 }
 
 /// Every editable field of a mould, by section.
@@ -331,6 +348,47 @@ fn color_button(ui: &mut egui::Ui, rgb: &mut Rgb) {
     }
 }
 
+/// Most gradient stops a design may bring along.
+const MAX_STOPS: usize = 16;
+
+/// Clamps every field into its range; values that are not finite take the range start.
+struct Clamp;
+
+impl Form for Clamp {
+    fn section(&mut self, _title: &str, body: &mut dyn FnMut(&mut dyn Form)) {
+        body(self);
+    }
+
+    fn float(&mut self, _label: &str, v: &mut f32, range: RangeInclusive<f32>) {
+        *v = if v.is_finite() {
+            v.clamp(*range.start(), *range.end())
+        } else {
+            *range.start()
+        };
+    }
+
+    fn int(&mut self, _label: &str, v: &mut u32, range: RangeInclusive<u32>) {
+        *v = (*v).clamp(*range.start(), *range.end());
+    }
+
+    fn toggle(&mut self, _label: &str, _v: &mut bool) {}
+
+    fn color(&mut self, _label: &str, v: &mut Rgb) {
+        for c in v {
+            self.float("", c, 0.0..=255.0);
+        }
+    }
+
+    fn gradient(&mut self, stops: &mut Vec<ColorStop>) {
+        stops.truncate(MAX_STOPS);
+        for stop in stops.iter_mut() {
+            self.float("", &mut stop.t, 0.0..=1.0);
+            self.color("", &mut stop.rgb);
+        }
+        stops.sort_by(|a, b| a.t.total_cmp(&b.t));
+    }
+}
+
 /// Sets every field to a uniform random value in its range.
 struct Randomizer(Rng);
 
@@ -408,6 +466,42 @@ mod tests {
             let _ = spore_core::render(&m, 1, 1.0, 32);
         }
         assert!(m != presets::penicillium());
+    }
+
+    #[test]
+    fn absurd_design_file_is_tamed() {
+        let mut d = Design {
+            seed: 1,
+            size: 1 << 20,
+            stages: 1 << 20,
+            mold: presets::rhizopus(),
+            view: crate::View::Patch,
+            patch: Patch {
+                count: 1_000_000_000,
+                area: f32::NAN,
+                stagger: -5.0,
+            },
+            field: Field::default(),
+        };
+        d.mold.shape.radius_growth = 100_000.0;
+        d.mold.hyphae.length = f32::INFINITY;
+        d.mold.slime.lobes = u32::MAX;
+        d.mold.body.gradient = vec![
+            ColorStop {
+                t: 9.0,
+                rgb: [f32::NAN, 1e9, -3.0]
+            };
+            10_000
+        ];
+        sanitize(&mut d);
+        mold(&mut InRange, &mut d.mold);
+        assert_eq!((d.size, d.stages, d.patch.count), (512, 24, 40));
+        assert_eq!(d.patch.area, 1.0);
+        assert!(d.mold.body.gradient.len() <= MAX_STOPS);
+        // Still paints, at a sane size.
+        d.size = 32;
+        let img = spore_core::render_patch(&d.mold, &d.patch, d.seed, 1.0, d.size);
+        assert!(img.w < 4096, "image {} px wide", img.w);
     }
 
     /// Strongest alpha on the outermost ring of pixels.
