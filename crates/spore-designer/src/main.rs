@@ -160,7 +160,8 @@ impl Game for App {
     }
 
     fn render(&mut self, ctx: &mut Context, frame: &mut Frame) {
-        if self.painted.as_ref() != Some(&self.ed.design) {
+        // The field view paints its own chunks in the background.
+        if self.ed.design.view != View::Field && self.painted.as_ref() != Some(&self.ed.design) {
             self.repaint(&mut ctx.gfx);
         }
         self.draw_preview(&mut ctx.gfx, frame);

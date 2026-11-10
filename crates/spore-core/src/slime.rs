@@ -2,6 +2,7 @@
 //! from Sporagon's `slime.rs`. Balls of neighbouring colonies share one field, so their
 //! puddles flow into each other.
 
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::ops::Range;
 
@@ -67,11 +68,40 @@ pub(crate) fn paint(sl: &Slime, balls: &[Ball], s: f32, cutoff: Option<f32>, img
             None => return,
         },
     };
-    let field = |x, y| field(balls, sl.ripple, cutoff, x, y);
+    // With a cutoff, only balls in the surrounding buckets can reach a pixel. Buckets keep
+    // the input order, so every window sums a pixel's balls in the same order (seamless).
+    let cell = cutoff.map(|c| c + 1.0);
+    let mut buckets: HashMap<(i32, i32), Vec<Ball>> = HashMap::new();
+    if let Some(cell) = cell {
+        for b in balls {
+            let key = ((b.x / cell).floor() as i32, (b.y / cell).floor() as i32);
+            buckets.entry(key).or_default().push(*b);
+        }
+    }
+    let mut near = Vec::new();
     let z = |f: f32| smooth(1.0, 6.0, f).sqrt();
     for py in ys {
         for px in xs.clone() {
             let (x, y) = ((px as f32 + 0.5) / s, (py as f32 + 0.5) / s);
+            let local = match cell {
+                Some(cell) => {
+                    let (bx, by) = ((x / cell).floor() as i32, (y / cell).floor() as i32);
+                    near.clear();
+                    for gy in by - 1..=by + 1 {
+                        for gx in bx - 1..=bx + 1 {
+                            if let Some(v) = buckets.get(&(gx, gy)) {
+                                near.extend_from_slice(v);
+                            }
+                        }
+                    }
+                    &near[..]
+                }
+                None => balls,
+            };
+            if local.is_empty() {
+                continue;
+            }
+            let field = |x, y| field(local, sl.ripple, cutoff, x, y);
             let f = field(x, y);
             if f < 1.0 {
                 continue;
