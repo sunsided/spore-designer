@@ -5,23 +5,24 @@
 //! has an influence that falls off with distance; where the summed influence (the *field*)
 //! reaches 1 there is slime. Because the field is shared, neighbouring puddles flow into one.
 //!
-//! - `slime/film.rs`: the field itself, and how far the film can reach (for image padding).
+//! - `slime/puddle.rs`: the balls of each colony's puddle.
+//! - `slime/film.rs`: the field itself.
+//! - `slime/extent.rs`: how far the film can reach (for image padding).
 //! - `slime/buckets.rs`: spatial lookup so each pixel only sums nearby balls (endless field).
 //! - `slime/shading.rs`: the film's colour and coverage at one pixel.
 
 mod buckets;
+mod extent;
 mod film;
+mod puddle;
 mod shading;
 
-use std::f32::consts::TAU;
-
-use super::Colony;
 use crate::Rgba;
-use crate::noise::hash;
 use crate::params::Slime;
 
 use buckets::BallBuckets;
-pub(super) use film::film_extent;
+pub(super) use extent::film_extent;
+pub(super) use puddle::{field_cutoff, puddles};
 
 /// A metaball, in reference pixels.
 #[derive(Clone, Copy, Debug)]
@@ -30,48 +31,6 @@ pub(super) struct Ball {
     pub y: f32,
     pub radius: f32,
 }
-
-// ------------------------------------------------------------------------------------------
-// Puddles
-
-/// The balls of every colony's puddle, colony by colony.
-pub(super) fn puddles(slime: &Slime, colonies: &[Colony]) -> Vec<Ball> {
-    colonies
-        .iter()
-        .flat_map(|colony| puddle(slime, colony))
-        .collect()
-}
-
-/// One colony's puddle: a central ball plus `lobes` balls evenly around it (with a little
-/// random twist), all scaled by the colony's growth.
-fn puddle(slime: &Slime, colony: &Colony) -> Vec<Ball> {
-    let (seed, growth) = (colony.seed, colony.growth);
-    let mut balls = vec![Ball {
-        x: colony.x,
-        y: colony.y,
-        radius: slime.size * growth,
-    }];
-
-    for lobe in 0..slime.lobes as i32 {
-        let angle = lobe as f32 / slime.lobes as f32 * TAU + hash(lobe, 0, seed) * 0.8;
-        let distance = (slime.reach + slime.reach_jitter * hash(lobe, 1, seed)) * growth;
-        balls.push(Ball {
-            x: colony.x + angle.cos() * distance,
-            y: colony.y + angle.sin() * distance,
-            radius: (slime.lobe_size + slime.lobe_jitter * hash(lobe, 2, seed)) * growth,
-        });
-    }
-    balls
-}
-
-/// How far each ball's influence reaches in the endless field (reference pixels). Past it a
-/// ball contributes nothing, so a chunk only needs colonies within reach of its pixels.
-pub(super) fn field_cutoff(slime: &Slime) -> f32 {
-    3.0 * slime.size.max(slime.lobe_size + slime.lobe_jitter) + 1.0
-}
-
-// ------------------------------------------------------------------------------------------
-// Painting
 
 /// Paint the film of `balls` into `canvas`, `scale` output pixels per reference pixel.
 ///
@@ -87,7 +46,7 @@ pub(super) fn paint(
 ) {
     let (columns, rows) = match cutoff {
         Some(_) => (canvas.columns(), canvas.rows()),
-        None => match film::canvas_bounds(balls, slime.ripple, scale, canvas) {
+        None => match extent::canvas_bounds(balls, slime.ripple, scale, canvas) {
             Some(bounds) => bounds,
             None => return,
         },

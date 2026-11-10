@@ -4,8 +4,12 @@
 //! - `preview/sheet.rs`: colony and patch views; every growth stage as one texture, the
 //!   current stage large and all of them as a filmstrip below.
 //! - `preview/field.rs`: the endless field; chunks painted around a panning camera.
+//!
+//! Both can show the cursor light or a lighting map instead of the baked picture
+//! (`preview/lighting.rs`).
 
 mod field;
+mod lighting;
 mod sheet;
 
 use game_toolkit::prelude::*;

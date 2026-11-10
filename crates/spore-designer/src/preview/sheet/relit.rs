@@ -1,16 +1,15 @@
 //! [`RelitStage`]: the big stage shown other than as painted. It is relit by the cursor
 //! light, or shown as one of its maps (albedo, height, normals, specular).
 //!
-//! It is redone only when something it depends on changed (stage, light, relief, frames),
-//! and the relighting is split across threads by rows.
+//! It is redone only when something it depends on changed (stage, light, relief, frames);
+//! the picture itself comes from `preview/lighting.rs`.
 
 use game_toolkit::prelude::*;
 use spore_core::Rgba;
-use spore_core::relief::{
-    Normal, PointLight, encode_normals, gloss_map, height_map, max_height, normal_map, relight_rows,
-};
+use spore_core::relief::{Normal, max_height, normal_map};
 
-use crate::editor::{LightMode, LightSettings};
+use crate::editor::LightSettings;
+use crate::preview::lighting::shade;
 
 /// Everything the shown picture depends on (besides the frames themselves).
 #[derive(Clone, Copy, PartialEq)]
@@ -41,7 +40,7 @@ impl RelitStage {
     }
 
     /// The texture showing `frames[stage]` the way `light.mode` asks (anything but
-    /// [`LightMode::Baked`]), redone only if needed.
+    /// [`LightMode::Baked`](crate::editor::LightMode::Baked)), redone only if needed.
     pub fn update(
         &mut self,
         gfx: &mut Graphics,
@@ -63,30 +62,17 @@ impl RelitStage {
             return texture;
         }
 
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let frame = &frames[stage];
-        let pixels = match light.mode {
-            LightMode::Baked | LightMode::Albedo => frame.albedo_rgba8(),
-            LightMode::Cursor => {
-                let normals = self.normals(frames, stage, relief);
-                relight(frame, normals, &point_light(light, light_position))
-            }
-            LightMode::Height => {
-                let max = max_height(frame);
-                grey(
-                    height_map(frame, max)
-                        .iter()
-                        .map(|height| (height >> 8) as u8),
-                )
-            }
-            LightMode::Normals => {
-                let normals = self.normals(frames, stage, relief);
-                encode_normals(normals)
-                    .chunks(3)
-                    .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
-                    .collect()
-            }
-            LightMode::Gloss => grey(gloss_map(frame).into_iter()),
-        };
+        let normals = self.normals(frames, stage, relief);
+        let pixels = shade(
+            frame,
+            normals,
+            light,
+            light_position,
+            max_height(frame),
+            threads,
+        );
 
         self.shown = Some(inputs);
         self.upload(gfx, frame.side, &pixels)
@@ -117,41 +103,4 @@ impl RelitStage {
             }
         }
     }
-}
-
-// ------------------------------------------------------------------------------------------
-
-fn point_light(light: LightSettings, position: [f32; 2]) -> PointLight {
-    PointLight {
-        x: position[0],
-        y: position[1],
-        height: light.height,
-        ambient: light.ambient,
-        specular: light.specular,
-        shininess: light.shininess,
-    }
-}
-
-/// Relight a whole frame, rows split across threads.
-fn relight(frame: &Rgba, normals: &[Normal], light: &PointLight) -> Vec<u8> {
-    let side = frame.side;
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let rows_per_thread = side.div_ceil(threads).max(1);
-    let mut out = vec![0u8; side * side * 4];
-
-    std::thread::scope(|scope| {
-        for (index, rows) in out.chunks_mut(rows_per_thread * side * 4).enumerate() {
-            let first = index * rows_per_thread;
-            let last = (first + rows_per_thread).min(side);
-            scope.spawn(move || relight_rows(frame, normals, light, first..last, rows));
-        }
-    });
-    out
-}
-
-/// Opaque grey RGBA8 from grey values.
-fn grey(values: impl Iterator<Item = u8>) -> Vec<u8> {
-    values
-        .flat_map(|value| [value, value, value, 255])
-        .collect()
 }

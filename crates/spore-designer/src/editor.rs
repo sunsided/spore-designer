@@ -21,13 +21,13 @@ pub struct Editor {
     /// Field view auto-pan: pixels per second, and direction in degrees (0 = right, 90 = up).
     pub pan_speed: f32,
     pub pan_angle: f32,
-    /// How the big stage in the colony and patch views is lit or shown.
+    /// How the preview is lit or shown (the big stage, or the whole endless field).
     pub light: LightSettings,
     /// Last mouse position over the preview, screen pixels (the cursor light follows it).
     pub cursor: Option<[f32; 2]>,
 }
 
-/// What the big stage shows.
+/// What the preview shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightMode {
     /// As painted, with Sporagon's fixed light from the top right.

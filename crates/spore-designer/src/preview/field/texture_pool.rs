@@ -52,7 +52,7 @@ impl TexturePool {
                 continue;
             }
 
-            let Some(pixels) = painter.painted(&chunk) else {
+            let Some(pixels) = painter.painted(&chunk).map(|painted| &painted.lit) else {
                 if let Some(index) = self.previous_version(chunk) {
                     used[index] = true;
                     shown.push((self.slots[index].0, chunk));

@@ -46,9 +46,6 @@ impl<'a> ColonyBrush<'a> {
         canvas_span(canvas, self.scale, (self.x, self.y), reach)
     }
 
-    // --------------------------------------------------------------------------------------
-    // Drawing in reference pixels
-
     /// Anti-aliased disc at reference position `(x, y)`.
     pub fn disc(
         &self,
@@ -128,9 +125,6 @@ impl<'a> ColonyBrush<'a> {
             );
         }
     }
-
-    // --------------------------------------------------------------------------------------
-    // Height in reference pixels
 
     /// A disc of shininess `gloss` (`0..1`) at reference position `(x, y)`.
     pub fn gloss_disc(&self, canvas: &mut Rgba, x: f32, y: f32, radius: f32, gloss: f32) {

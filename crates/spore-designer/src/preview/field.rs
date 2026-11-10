@@ -7,19 +7,27 @@
 //! 2. collects chunks the workers finished and starts the missing ones
 //!    (`field/painting.rs`, never blocking),
 //! 3. puts painted chunks into reused GPU textures (`field/texture_pool.rs`),
-//! 4. draws them.
+//! 4. with a light mode on, relights the chunks that have their maps (all of them, every
+//!    frame: the light and the camera move), in parallel,
+//! 5. draws them.
 //!
 //! A chunk still being painted after a design change keeps showing its previous version.
+//!
+//! The camera (drift and drag) is `field/camera.rs`; relighting is `field/relight.rs`.
 
+mod camera;
 mod painting;
+mod relight;
+mod relit_textures;
 mod texture_pool;
 
 use game_toolkit::prelude::*;
 use spore_core::CHUNK_CELLS;
 
 use super::{PreviewArea, clear};
-use crate::editor::Editor;
+use crate::editor::{Editor, LightMode};
 use painting::ChunkPainter;
+use relit_textures::RelitTextures;
 use texture_pool::TexturePool;
 
 /// A chunk at one growth stage: column, row, stage.
@@ -28,6 +36,7 @@ type ChunkKey = (i32, i32, usize);
 pub struct FieldPreview {
     painter: ChunkPainter,
     textures: TexturePool,
+    relit: RelitTextures,
     /// A mouse drag started on the preview (not on the panel) and is still held.
     dragging: bool,
 }
@@ -37,34 +46,10 @@ impl FieldPreview {
         Self {
             painter: ChunkPainter::new(),
             textures: TexturePool::default(),
+            relit: RelitTextures::default(),
             dragging: false,
         }
     }
-
-    // --------------------------------------------------------------------------------------
-    // Camera
-
-    /// Move the camera: drift by the auto-pan, and follow a mouse drag that started right of
-    /// the panel (`panel_width` screen pixels wide).
-    pub fn pan(&mut self, editor: &mut Editor, input: &Input, seconds: f32, panel_width: f32) {
-        let heading = editor.pan_angle.to_radians();
-        editor.camera[0] += heading.cos() * editor.pan_speed * seconds;
-        editor.camera[1] -= heading.sin() * editor.pan_speed * seconds;
-
-        if input.mouse_pressed(MouseButton::Left) {
-            self.dragging = input.mouse_pos_window().0 > panel_width;
-        }
-        if !input.mouse_held(MouseButton::Left) {
-            self.dragging = false;
-        }
-        if self.dragging {
-            let (dx, dy) = input.mouse_delta();
-            editor.camera = [editor.camera[0] - dx, editor.camera[1] - dy];
-        }
-    }
-
-    // --------------------------------------------------------------------------------------
-    // Drawing
 
     pub fn draw(
         &mut self,
@@ -88,7 +73,8 @@ impl FieldPreview {
         let visible = visible_chunks(view, chunk_size, stage);
 
         // Paint (in the background) and upload.
-        if self.painter.sync(design) {
+        let lighting = editor.light.mode != LightMode::Baked;
+        if self.painter.sync(design, lighting) {
             self.textures.design_changed(chunk_side);
         }
         self.painter.collect_finished();
@@ -98,7 +84,10 @@ impl FieldPreview {
             (view[1] + view[3] * 0.5) / chunk_size,
         );
         self.painter.start_missing(&visible, view_center);
-        let shown = self.textures.show(gfx, &visible, &self.painter);
+        let mut shown = self.textures.show(gfx, &visible, &self.painter);
+        if lighting {
+            self.relight(gfx, editor, origin, chunk_side, &mut shown);
+        }
 
         // Draw, at whole pixels so chunk edges meet exactly.
         let mut screen = frame.painter(gfx);

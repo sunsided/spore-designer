@@ -35,8 +35,6 @@ pub use surface::{Dust, Furrows, Lighting, Specks, Variance, Zones};
 /// An RGB colour, channels in `0..255`.
 pub type Rgb = [f32; 3];
 
-// ------------------------------------------------------------------------------------------
-
 /// A complete mould design. Every layer of Sporagon's Penicillium and Rhizopus painters is in
 /// here, so both species (and anything in between) are just different values.
 ///
