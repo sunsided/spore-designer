@@ -70,6 +70,8 @@ fn reach(p: &MoldParams) -> f32 {
         0.0
     };
     let mut r = rc * (sh.wobble_base + sh.wobble_amp + sh.lobe_amp).max(0.0) * (1.0 + fringe);
+    // Melding fills the gap between neighbours; the smooth union bulges by up to meld / 2.
+    r += 0.5 * sh.meld.max(0.0);
     let ro = &p.rosettes;
     if ro.enabled && ro.count > 0 {
         // Rosettes are pulled in to stay within the colony's reference square, unless they
@@ -129,7 +131,8 @@ pub(crate) fn paint(p: &MoldParams, seed: u32, g: f32, size: usize) -> Rgba {
             &mut img,
         );
     }
-    colony(p, seed, g, s, (c, c), &mut img);
+    bodies(p, s, &[(c, c, g, seed)], &mut img);
+    overlays(p, seed, g, s, (c, c), &mut img);
     img
 }
 
@@ -156,8 +159,9 @@ pub(crate) fn paint_patch(p: &MoldParams, patch: &Patch, seed: u32, g: f32, size
             .collect();
         slime::paint(&p.slime, &balls, s, None, &mut img);
     }
+    bodies(p, s, &colonies, &mut img);
     for &(x, y, g, seed) in &colonies {
-        colony(p, seed, g, s, (x, y), &mut img);
+        overlays(p, seed, g, s, (x, y), &mut img);
     }
     img
 }
@@ -230,8 +234,9 @@ fn paint_field(
             .collect();
         slime::paint(sl, &balls, s, Some(cutoff), &mut img);
     }
+    bodies(p, s, &colonies, &mut img);
     for &(x, y, g, seed) in &colonies {
-        colony(p, seed, g, s, (x, y), &mut img);
+        overlays(p, seed, g, s, (x, y), &mut img);
     }
     img
 }
@@ -285,8 +290,9 @@ fn place(patch: &Patch, seed: u32, extent: f32, margin: f32, g: f32) -> Vec<(f32
     out
 }
 
-/// Paint one colony (everything but its slime) centred at `(cx, cy)` reference pixels.
-fn colony(p: &MoldParams, seed: u32, g: f32, s: f32, (cx, cy): (f32, f32), img: &mut Rgba) {
+/// Paint what sits on one colony's body (rosettes, hyphae, spore heads, drops, gloss),
+/// centred at `(cx, cy)` reference pixels.
+fn overlays(p: &MoldParams, seed: u32, g: f32, s: f32, (cx, cy): (f32, f32), img: &mut Rgba) {
     let ctx = Ctx {
         p,
         seed,
@@ -296,7 +302,6 @@ fn colony(p: &MoldParams, seed: u32, g: f32, s: f32, (cx, cy): (f32, f32), img: 
         cy,
         rc: (p.shape.radius_base + p.shape.radius_growth * g).max(0.5),
     };
-    body(&ctx, img);
     if p.rosettes.enabled {
         rosettes(&ctx, img);
     }
@@ -329,86 +334,235 @@ fn sorted(stops: &[ColorStop]) -> Vec<ColorStop> {
     v
 }
 
-fn body(ctx: &Ctx<'_>, img: &mut Rgba) {
-    let p = ctx.p;
-    let (seed, g, s, cx, cy, rc) = (ctx.seed, ctx.g, ctx.s, ctx.cx, ctx.cy, ctx.rc);
+/// Polynomial smooth minimum: `min(a, b)` with a fillet of size `k` where they meet.
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+    if k <= 0.0 {
+        return a.min(b);
+    }
+    let h = (k - (a - b).abs()).max(0.0) / k;
+    a.min(b) - h * h * k * 0.25
+}
+
+/// A colony's body as seen from one pixel.
+struct Hit {
+    dx: f32,
+    dy: f32,
+    th: f32,
+    wob: f32,
+    /// Distance from the centre to the wobbly edge in this direction.
+    edge: f32,
+    /// Signed distance to that edge, negative inside (reference pixels).
+    d: f32,
+}
+
+/// Per-colony constants of the body pass.
+struct Body<'a> {
+    ctx: Ctx<'a>,
+    rot: f32,
+    furrows: f32,
+    /// Square half-size, in reference pixels, outside which the colony cannot touch a pixel.
+    reach: f32,
+}
+
+impl<'a> Body<'a> {
+    fn new(ctx: Ctx<'a>, meld: f32) -> Self {
+        let (p, rc) = (ctx.p, ctx.rc);
+        let rot = if p.shape.spin {
+            ctx.rng(0).range(0.0, TAU)
+        } else {
+            0.0
+        };
+        let furrows = p.furrows.count + (ctx.seed % 4) as f32 * 2.0;
+        let sh = &p.shape;
+        let fringe = if p.fringe.enabled {
+            p.fringe.width
+        } else {
+            0.0
+        };
+        // Painted pixels lie within the fringe band of the melded edge, and a colony only
+        // influences one within `meld + 1` of the nearest edge; see `bodies`.
+        let reach = rc * (sh.wobble_base + sh.wobble_amp + sh.lobe_amp) * (1.0 + fringe)
+            + 1.25 * meld
+            + 3.0;
+        Self {
+            ctx,
+            rot,
+            furrows,
+            reach,
+        }
+    }
+
+    fn hit(&self, px: i32, py: i32) -> Option<Hit> {
+        let c = &self.ctx;
+        let (dx, dy) = (
+            (px as f32 + 0.5) / c.s - c.cx,
+            (py as f32 + 0.5) / c.s - c.cy,
+        );
+        if dx.abs() > self.reach || dy.abs() > self.reach {
+            return None;
+        }
+        let sh = &c.p.shape;
+        let th = dy.atan2(dx) + self.rot;
+        let wob = fbm(
+            th.cos() * sh.wobble_freq + 5.0,
+            th.sin() * sh.wobble_freq + 5.0,
+            c.seed,
+            3,
+        );
+        let lobe = sh.lobe_amp * (th * sh.lobes as f32).cos();
+        let edge = (c.rc * (sh.wobble_base + sh.wobble_amp * wob + lobe)).max(0.1);
+        let d = (dx * dx + dy * dy).sqrt() - edge;
+        Some(Hit {
+            dx,
+            dy,
+            th,
+            wob,
+            edge,
+            d,
+        })
+    }
+
+    /// Body colour and coverage at normalised radius `nr` (0 centre, 1 edge).
+    fn color(&self, gradient: &[ColorStop], px: i32, py: i32, h: &Hit, nr: f32) -> ([f32; 3], f32) {
+        let c = &self.ctx;
+        let (p, seed, g, s) = (c.p, c.seed, c.g, c.s);
+        let (b, l) = (&p.body, &p.lighting);
+        let (ux, uy) = (px as f32 / s, py as f32 / s);
+        let mut col = sample(gradient, nr);
+        let z = &p.zones;
+        if nr >= z.start && nr < z.end {
+            let zone = (nr * z.freq + h.wob * 2.0).sin() * 0.5 + 0.5;
+            col = mix(col, z.rgb, zone * z.amount);
+        }
+        let d = &p.dust;
+        if nr < d.extent {
+            let dust = smooth(d.low, d.high, fbm(ux / d.scale, uy / d.scale, seed + 13, 3));
+            col = mix(col, d.rgb, dust * d.amount);
+        }
+        let fluff = fbm(ux / b.fluff_scale, uy / b.fluff_scale, seed + 5, 3);
+        col = scale(col, lerp(b.fluff_low, 1.0, fluff.powf(0.8)));
+        col = mix(col, b.aged, (1.0 - nr * 1.6).max(0.0) * g * b.age);
+        col = mix(
+            col,
+            b.young,
+            (1.0 - g * b.youth).max(0.0) * (1.0 - nr * 0.3),
+        );
+        let v = &p.variance;
+        if v.hue != 0.0 || v.saturation != 1.0 {
+            let n = fbm(ux / v.scale, uy / v.scale, seed + 21, 3);
+            col = shift_hue(col, (n - 0.5) * 2.0 * v.hue, v.saturation);
+        }
+        let f = &p.furrows;
+        let furrow = ((h.th * self.furrows + h.wob * 4.0).sin() * 0.5 + 0.5).powf(f.sharpness);
+        let fine = fbm(ux / l.grain_scale, uy / l.grain_scale, seed + 11, 2);
+        let k = lerp(1.0, dome(h.dx / h.edge, h.dy / h.edge, nr), l.dome)
+            * (1.0 - f.depth * furrow * (nr * 2.0).min(1.0) * g)
+            * (1.0 - l.grain * 0.5 + l.grain * fine);
+        col = scale(col, k);
+        let sp = &p.specks;
+        let hs = hash(px, py, seed + 3);
+        if nr < sp.extent && hs > 1.0 - sp.amount {
+            col = scale(col, sp.bright);
+        } else if nr < sp.extent && hs < sp.amount * 0.7 {
+            col = scale(col, sp.dark);
+        }
+        let cotton = smooth(0.08, 0.4, (1.0 - nr * nr) * (0.45 + 0.9 * fluff));
+        (col, lerp(1.0, cotton, b.softness))
+    }
+
+    /// Fringe coverage at normalised radius `nr` past the edge.
+    fn fringe(&self, px: i32, py: i32, nr: f32) -> f32 {
+        let fr = &self.ctx.p.fringe;
+        // Output-pixel noise: the fringe stays hair-fine at any size.
+        let fuzz = fbm(
+            px as f32 / fr.scale,
+            py as f32 / fr.scale,
+            self.ctx.seed + 7,
+            2,
+        );
+        (1.0 - (nr - 1.0) / fr.width).powf(1.5) * smooth(0.3, 0.7, fuzz) * fr.alpha
+    }
+}
+
+/// Paint the bodies of all `colonies` as one melded mass: the edge is the smooth union of
+/// every colony's edge (gaps up to `shape.meld` close), and colour, texture and fringe blend
+/// between the colonies by how close each one's edge is. With one colony this is just its
+/// body.
+fn bodies(p: &MoldParams, s: f32, colonies: &[(f32, f32, f32, u32)], img: &mut Rgba) {
+    if colonies.is_empty() {
+        return;
+    }
     let gradient = sorted(&p.body.gradient);
-    let rot = if p.shape.spin {
-        ctx.rng(0).range(0.0, TAU)
-    } else {
-        0.0
-    };
-    let furrows = p.furrows.count + (seed % 4) as f32 * 2.0;
-    let (sh, b, l) = (&p.shape, &p.body, &p.lighting);
-    let fringe = if p.fringe.enabled {
-        p.fringe.width
-    } else {
-        0.0
-    };
-    let reach = rc * (sh.wobble_base + sh.wobble_amp + sh.lobe_amp) * (1.0 + fringe) + 2.0;
-    let (xs, ys) = ctx.span(img, reach);
+    // Fillet size: two edges `meld` apart just touch (the smooth min dips by k / 4 midway).
+    let meld = 2.0 * p.shape.meld.max(0.0);
+    // Blend weights fall to exactly zero `support` past the nearest edge, so colonies out of
+    // range never matter (and field chunks stay seamless).
+    let support = meld + 1.0;
+    let bodies: Vec<Body<'_>> = colonies
+        .iter()
+        .map(|&(cx, cy, g, seed)| {
+            let ctx = Ctx {
+                p,
+                seed,
+                g,
+                s,
+                cx,
+                cy,
+                rc: (p.shape.radius_base + p.shape.radius_growth * g).max(0.5),
+            };
+            Body::new(ctx, meld)
+        })
+        .collect();
+    let (xs, ys) = bodies
+        .iter()
+        .map(|b| b.ctx.span(img, b.reach))
+        .reduce(|(ax, ay), (bx, by)| {
+            (
+                ax.start.min(bx.start)..ax.end.max(bx.end),
+                ay.start.min(by.start)..ay.end.max(by.end),
+            )
+        })
+        .expect("at least one colony");
+    let mut hits: Vec<(&Body<'_>, Hit)> = Vec::new();
     for py in ys {
         for px in xs.clone() {
-            let (ux, uy) = (px as f32 / s, py as f32 / s);
-            let (dx, dy) = ((px as f32 + 0.5) / s - cx, (py as f32 + 0.5) / s - cy);
-            let r = (dx * dx + dy * dy).sqrt();
-            let th = dy.atan2(dx) + rot;
-            let wob = fbm(
-                th.cos() * sh.wobble_freq + 5.0,
-                th.sin() * sh.wobble_freq + 5.0,
-                seed,
-                3,
-            );
-            let lobe = sh.lobe_amp * (th * sh.lobes as f32).cos();
-            let edge = (rc * (sh.wobble_base + sh.wobble_amp * wob + lobe)).max(0.1);
-            let nr = r / edge;
+            hits.clear();
+            hits.extend(bodies.iter().filter_map(|b| b.hit(px, py).map(|h| (b, h))));
+            if hits.is_empty() {
+                continue;
+            }
+            // Smooth only the two nearest edges: chaining smin over every colony would let
+            // the bulge grow with the number of neighbours.
+            let (mut dmin, mut d2) = (f32::MAX, f32::MAX);
+            for h in &hits {
+                if h.1.d < dmin {
+                    (dmin, d2) = (h.1.d, dmin);
+                } else if h.1.d < d2 {
+                    d2 = h.1.d;
+                }
+            }
+            let d = smin(dmin, d2, meld);
+            let weight = |h: &Hit| (1.0 - (h.d - dmin) / support).max(0.0).powi(2);
+            let wsum: f32 = hits.iter().map(|h| weight(&h.1)).sum();
+            let edge = hits.iter().map(|h| weight(&h.1) * h.1.edge).sum::<f32>() / wsum;
+            let nr = (1.0 + d / edge).max(0.0);
             if nr < 1.0 {
-                let mut col = sample(&gradient, nr);
-                let z = &p.zones;
-                if nr >= z.start && nr < z.end {
-                    let zone = (nr * z.freq + wob * 2.0).sin() * 0.5 + 0.5;
-                    col = mix(col, z.rgb, zone * z.amount);
+                let (mut col, mut a) = ([0.0; 3], 0.0);
+                for (b, h) in &hits {
+                    let w = weight(h) / wsum;
+                    if w > 0.0 {
+                        let (c, ca) = b.color(&gradient, px, py, h, nr);
+                        col = [col[0] + c[0] * w, col[1] + c[1] * w, col[2] + c[2] * w];
+                        a += ca * w;
+                    }
                 }
-                let d = &p.dust;
-                if nr < d.extent {
-                    let dust = smooth(d.low, d.high, fbm(ux / d.scale, uy / d.scale, seed + 13, 3));
-                    col = mix(col, d.rgb, dust * d.amount);
-                }
-                let fluff = fbm(ux / b.fluff_scale, uy / b.fluff_scale, seed + 5, 3);
-                col = scale(col, lerp(b.fluff_low, 1.0, fluff.powf(0.8)));
-                col = mix(col, b.aged, (1.0 - nr * 1.6).max(0.0) * g * b.age);
-                col = mix(
-                    col,
-                    b.young,
-                    (1.0 - g * b.youth).max(0.0) * (1.0 - nr * 0.3),
-                );
-                let v = &p.variance;
-                if v.hue != 0.0 || v.saturation != 1.0 {
-                    let n = fbm(ux / v.scale, uy / v.scale, seed + 21, 3);
-                    col = shift_hue(col, (n - 0.5) * 2.0 * v.hue, v.saturation);
-                }
-                let f = &p.furrows;
-                let furrow = ((th * furrows + wob * 4.0).sin() * 0.5 + 0.5).powf(f.sharpness);
-                let fine = fbm(ux / l.grain_scale, uy / l.grain_scale, seed + 11, 2);
-                let k = lerp(1.0, dome(dx / edge, dy / edge, nr), l.dome)
-                    * (1.0 - f.depth * furrow * (nr * 2.0).min(1.0) * g)
-                    * (1.0 - l.grain * 0.5 + l.grain * fine);
-                col = scale(col, k);
-                let sp = &p.specks;
-                let h = hash(px, py, seed + 3);
-                if nr < sp.extent && h > 1.0 - sp.amount {
-                    col = scale(col, sp.bright);
-                } else if nr < sp.extent && h < sp.amount * 0.7 {
-                    col = scale(col, sp.dark);
-                }
-                let cotton = smooth(0.08, 0.4, (1.0 - nr * nr) * (0.45 + 0.9 * fluff));
-                img.over(px, py, col, lerp(1.0, cotton, b.softness));
+                img.over(px, py, col, a);
             } else if p.fringe.enabled && nr < 1.0 + p.fringe.width {
-                let fr = &p.fringe;
-                // Output-pixel noise: the fringe stays hair-fine at any size.
-                let fuzz = fbm(px as f32 / fr.scale, py as f32 / fr.scale, seed + 7, 2);
-                let a = (1.0 - (nr - 1.0) / fr.width).powf(1.5) * smooth(0.3, 0.7, fuzz);
-                img.over(px, py, fr.rgb, a * fr.alpha);
+                let a: f32 = hits
+                    .iter()
+                    .map(|(b, h)| weight(h) / wsum * b.fringe(px, py, nr))
+                    .sum();
+                img.over(px, py, p.fringe.rgb, a);
             }
         }
     }

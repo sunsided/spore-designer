@@ -69,6 +69,10 @@ pub struct Shape {
     pub lobe_amp: f32,
     /// Rotate the outline by a random angle per seed.
     pub spin: bool,
+    /// Widest gap (reference pixels) between neighbouring colonies that fuses them into one
+    /// mass in patches and fields; 0 keeps every colony a separate disc.
+    #[serde(default)]
+    pub meld: f32,
 }
 
 /// The colony mass: colour by normalised radius, from hard velvet to soft cotton.

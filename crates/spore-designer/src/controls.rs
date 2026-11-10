@@ -132,6 +132,7 @@ fn mold(f: &mut dyn Form, m: &mut MoldParams) {
         f.int("lobes", &mut s.lobes, 0..=16);
         f.float("lobe depth", &mut s.lobe_amp, 0.0..=0.4);
         f.toggle("random rotation", &mut s.spin);
+        f.float("meld (patch and field)", &mut s.meld, 0.0..=24.0);
     });
     f.section("Body", &mut |f| {
         let b = &mut m.body;

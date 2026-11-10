@@ -46,6 +46,7 @@ pub fn penicillium() -> MoldParams {
             lobes: 5,
             lobe_amp: 0.0,
             spin: true,
+            meld: 6.0,
         },
         body: Body {
             gradient: stops(&[
@@ -177,6 +178,7 @@ pub fn rhizopus() -> MoldParams {
             wobble_amp: 0.3,
             wobble_freq: 1.6,
             spin: false,
+            meld: 10.0,
             ..base.shape
         },
         body: Body {
