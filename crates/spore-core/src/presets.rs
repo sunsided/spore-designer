@@ -1,9 +1,14 @@
-//! Starting points, from Sporagon's two species to plain fluff and a lurid lichen bloom.
+//! Ready-made designs, from Sporagon's two species to plain fluff and a lurid lichen bloom.
+//!
+//! Each preset is a complete [`MoldParams`]. Most start from another one and override only
+//! what differs (`..base`), so reading a preset tells you what makes it distinct.
 
 use crate::params::*;
 
+/// A function that builds a preset.
 pub type Preset = fn() -> MoldParams;
 
+/// Every preset with its display name, in menu order.
 pub const ALL: &[(&str, Preset)] = &[
     ("Penicillium", penicillium),
     ("Rhizopus", rhizopus),
@@ -11,10 +16,12 @@ pub const ALL: &[(&str, Preset)] = &[
     ("Annihilation", annihilation),
 ];
 
-fn stops(s: &[(f32, Rgb)]) -> Vec<ColorStop> {
-    s.iter().map(|&(t, rgb)| ColorStop { t, rgb }).collect()
+/// A gradient from `(position, colour)` pairs.
+fn stops(pairs: &[(f32, Rgb)]) -> Vec<ColorStop> {
+    pairs.iter().map(|&(t, rgb)| ColorStop { t, rgb }).collect()
 }
 
+/// Rosettes switched off, with sensible values ready for when they are switched on.
 fn no_rosettes() -> Rosettes {
     Rosettes {
         enabled: false,
@@ -31,6 +38,8 @@ fn no_rosettes() -> Rosettes {
         alpha: 1.0,
     }
 }
+
+// ------------------------------------------------------------------------------------------
 
 /// Sporagon's Penicillium: velvety blue-green with concentric zones, radial furrows, a white
 /// advancing margin and amber guttation droplets.
@@ -166,6 +175,8 @@ pub fn penicillium() -> MoldParams {
     }
 }
 
+// ------------------------------------------------------------------------------------------
+
 /// Sporagon's Rhizopus, black bread mould: white cotton with wandering hyphae and sporangia
 /// that ripen from white to black.
 pub fn rhizopus() -> MoldParams {
@@ -237,6 +248,8 @@ pub fn rhizopus() -> MoldParams {
     }
 }
 
+// ------------------------------------------------------------------------------------------
+
 /// Plain fluff: soft white cotton, dense hyphae, no spore heads, no gloss.
 pub fn fluffy() -> MoldParams {
     let base = rhizopus();
@@ -284,6 +297,8 @@ pub fn fluffy() -> MoldParams {
         ..base
     }
 }
+
+// ------------------------------------------------------------------------------------------
 
 /// The colourful growth from the film's swimming pool: a bruise-violet and coral body
 /// overrun by banded lichen rosettes in pink, ochre and teal.

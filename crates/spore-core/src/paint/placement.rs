@@ -1,0 +1,112 @@
+//! Where colonies sit when there is more than one, and how far each has grown.
+//!
+//! Both layouts give every colony a random *start delay*: at overall growth `g` a colony
+//! that starts at `delay` has grown `(g - delay) / (1 - delay)`, so late ones catch up by the
+//! end. Colonies that have not started yet are left out.
+
+use super::Colony;
+use crate::noise::{Rng, hash};
+use crate::params::{Field, Patch};
+
+/// A colony's own growth at overall growth `overall`, given its start delay.
+fn delayed_growth(overall: f32, delay: f32) -> f32 {
+    ((overall - delay) / (1.0 - delay)).clamp(0.0, 1.0)
+}
+
+// ------------------------------------------------------------------------------------------
+// Patch
+
+/// `patch.count` colonies on a square `extent` reference pixels wide, centres at least
+/// `margin` from its edges.
+///
+/// Positions use *best-candidate sampling*: for each colony try 12 random spots and keep the
+/// one farthest from the colonies already placed. That spreads them evenly without a grid.
+/// Positions do not depend on `overall` growth, only which colonies have started does.
+pub(super) fn place_in_patch(
+    patch: &Patch,
+    seed: u32,
+    extent: f32,
+    margin: f32,
+    overall: f32,
+) -> Vec<Colony> {
+    let mut rng = Rng(0xC2B2_AE3D_27D4_EB4F ^ (seed as u64).wrapping_mul(104_729));
+    let mut placed: Vec<Colony> = Vec::new();
+
+    for index in 0..patch.count {
+        let mut best = (extent * 0.5, extent * 0.5, -1.0);
+        for _ in 0..12 {
+            let (x, y) = (
+                rng.range(margin, extent - margin),
+                rng.range(margin, extent - margin),
+            );
+            let nearest_squared = placed
+                .iter()
+                .map(|other| (other.x - x).powi(2) + (other.y - y).powi(2))
+                .fold(f32::MAX, f32::min);
+            if nearest_squared > best.2 {
+                best = (x, y, nearest_squared);
+            }
+        }
+
+        let delay = rng.unit() * patch.stagger.clamp(0.0, 0.95);
+        placed.push(Colony {
+            x: best.0,
+            y: best.1,
+            growth: delayed_growth(overall, delay),
+            seed: seed.wrapping_add(index * 7919),
+        });
+    }
+
+    placed.retain(|colony| colony.growth > 0.0);
+    placed
+}
+
+// ------------------------------------------------------------------------------------------
+// Endless field
+
+/// Every colony of the endless field that can touch the window `(x0, y0, x1, y1)` (reference
+/// pixels), given that a colony reaches `reach` from its centre.
+///
+/// The field is a grid of cells `field.spacing` colony widths wide; each cell holds a colony
+/// with probability `field.density`, pushed off-centre by up to `field.jitter` of a cell.
+/// Everything about a cell's colony comes from hashing the cell's grid position, so any
+/// window finds the same colonies (in the same row-major order) without shared state.
+pub(super) fn field_colonies(
+    field: &Field,
+    seed: u32,
+    overall: f32,
+    (x0, y0, x1, y1): (f32, f32, f32, f32),
+    reach: f32,
+) -> Vec<Colony> {
+    let cell = crate::REFERENCE_SIZE as f32 * field.spacing.max(0.2);
+    // Cells whose colony could reach into `low..high` along one axis (one spare cell each
+    // side covers the jitter).
+    let cells = |low: f32, high: f32| {
+        ((low - reach) / cell).floor() as i32 - 1..=((high + reach) / cell).ceil() as i32
+    };
+
+    let mut colonies = Vec::new();
+    for row in cells(y0, y1) {
+        for column in cells(x0, x1) {
+            // Independent random values for this cell, one per `key`.
+            let random = |key: u32| hash(column, row, seed.wrapping_add(key * 977));
+            if random(0) >= field.density {
+                continue;
+            }
+
+            let x = (column as f32 + 0.5 + (random(1) - 0.5) * field.jitter) * cell;
+            let y = (row as f32 + 0.5 + (random(2) - 0.5) * field.jitter) * cell;
+            let delay = random(3) * field.stagger.clamp(0.0, 0.95);
+            let growth = delayed_growth(overall, delay);
+            if growth > 0.0 {
+                colonies.push(Colony {
+                    x,
+                    y,
+                    growth,
+                    seed: (random(4) * 16_777_216.0) as u32 ^ seed,
+                });
+            }
+        }
+    }
+    colonies
+}
