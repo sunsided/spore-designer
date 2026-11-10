@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "EUPL-1.2"
 authors = ["Markus Mayer"]
+repository = "https://github.com/sunsided/spore-designer"
 publish = false
 
 [workspace.dependencies]
