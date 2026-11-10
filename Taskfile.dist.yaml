@@ -1,0 +1,37 @@
+# Spore Designer task runner
+# https://taskfile.dev
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - task --list --sort=none
+    silent: true
+
+  run:
+    desc: Run the designer (release build)
+    cmds:
+      - cargo run --release -p spore-designer {{.CLI_ARGS}}
+
+  build:
+    desc: Build the release binary
+    cmds:
+      - cargo build --release {{.CLI_ARGS}}
+
+  test:
+    desc: Run the tests
+    cmds:
+      - cargo test {{.CLI_ARGS}}
+
+  lint:
+    desc: Check formatting, run clippy, and check the core builds for the web
+    cmds:
+      - cargo fmt --check
+      - cargo clippy --all-targets -- -D warnings
+      - cargo check -p spore-core --target wasm32-unknown-unknown
+
+  check:
+    desc: Everything CI would run (lint and tests)
+    cmds:
+      - task: lint
+      - task: test

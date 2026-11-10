@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/spore-core", "crates/spore-designer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "EUPL-1.2"
+authors = ["Markus Mayer"]
+publish = false
+
+[workspace.dependencies]
+spore-core = { path = "crates/spore-core" }
+serde = { version = "1", features = ["derive"] }
+ron = "0.10"
+
+# Procedural painting is heavy; keep debug builds interactive.
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 3
