@@ -30,6 +30,11 @@ tasks:
     cmds:
       - trunk build --release {{.CLI_ARGS}}
 
+  docs:presets:
+    desc: Render each preset as a single colony into docs/presets/ (for the README)
+    cmds:
+      - cargo run --release -p spore-designer --example preset_gallery
+
   test:
     desc: Run the tests
     cmds:
