@@ -14,4 +14,15 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 ron = { workspace = true }
 serde = { workspace = true }
 rfd = "0.15"
+web-time = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
+
+# In the browser: downloads for saving, async file picking for loading. (The toolkit logs to
+# the browser console itself.)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Blob", "Document", "Element", "HtmlAnchorElement", "Url", "Window"] }

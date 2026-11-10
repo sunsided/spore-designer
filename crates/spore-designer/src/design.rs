@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use spore_core::{Field, MoldParams, Patch, PatchLayout, Rgba, presets, render, stage_growth};
 
+use crate::work::parallel_map;
+
 /// What the preview shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum View {
@@ -55,8 +57,8 @@ impl Default for Design {
 }
 
 impl Design {
-    /// Every growth stage, painted in parallel (one thread per stage): a patch in the patch
-    /// view, else a lone colony. The field view paints its own chunks instead (see
+    /// Every growth stage, painted in parallel where there are threads (see `work.rs`): a
+    /// patch in the patch view, else a lone colony. The field view paints its own chunks instead (see
     /// `preview/field.rs`).
     pub fn frames(&self) -> Vec<Rgba> {
         // A patch's layout is the same for every stage; work it out once.
@@ -64,21 +66,12 @@ impl Design {
             .then(|| PatchLayout::new(&self.mold, &self.patch, self.seed, self.size));
         let layout = layout.as_ref();
 
-        std::thread::scope(|scope| {
-            let jobs: Vec<_> = (0..self.stages)
-                .map(|stage| {
-                    scope.spawn(move || {
-                        let growth = stage_growth(stage, self.stages);
-                        match layout {
-                            Some(layout) => layout.render(&self.mold, growth),
-                            None => render(&self.mold, self.seed, growth, self.size),
-                        }
-                    })
-                })
-                .collect();
-            jobs.into_iter()
-                .map(|job| job.join().expect("painter panicked"))
-                .collect()
+        parallel_map((0..self.stages).collect(), |stage| {
+            let growth = stage_growth(stage, self.stages);
+            match layout {
+                Some(layout) => layout.render(&self.mold, growth),
+                None => render(&self.mold, self.seed, growth, self.size),
+            }
         })
     }
 }

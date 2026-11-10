@@ -13,6 +13,7 @@ use game_toolkit::prelude::*;
 use spore_core::{Rgba, sheet};
 
 use crate::design::Design;
+use crate::work::Background;
 use relit::RelitStage;
 
 /// Painted stages, and the design they show.
@@ -58,7 +59,7 @@ impl SheetPreview {
     /// Keep the sheet in step with `design` without blocking the frame: take the newest
     /// finished stages, and while the design differs from them, paint it on a worker (one at
     /// a time; when it finishes, the design as it is by then gets painted next).
-    pub fn update(&mut self, gfx: &mut Graphics, design: &Design) {
+    pub fn update(&mut self, gfx: &mut Graphics, design: &Design, background: &mut Background) {
         while let Ok((painted, frames)) = self.results.1.try_recv() {
             self.painting = None;
             self.upload(gfx, painted, frames);
@@ -67,7 +68,7 @@ impl SheetPreview {
         if self.painting.is_none() && self.painted.as_ref() != Some(design) {
             let (design, results) = (design.clone(), self.results.0.clone());
             self.painting = Some(design.clone());
-            std::thread::spawn(move || {
+            background.spawn(move || {
                 let frames = design.frames();
                 // The app may be closing; nothing to do then.
                 let _ = results.send((design, frames));

@@ -1,23 +1,26 @@
 //! Exporting stages as PNG, with their lighting maps.
 
-use std::path::{Path, PathBuf};
-
-use image::{ColorType, ImageBuffer, Luma};
-use rfd::FileDialog;
+use image::codecs::png::PngEncoder;
+use image::{ExtendedColorType, ImageEncoder};
 use spore_core::relief::{encode_normals, gloss_map, height_map, max_height, normal_map};
 use spore_core::{Rgba, grid, sheet};
 
-use super::{CANCELLED, Outcome};
+use super::Outcome;
+use super::deliver::{self, Bundle};
+
+/// A file's name suffix (see [`Bundle::files`]) and contents.
+type NamedFile = (&'static str, Vec<u8>);
 
 /// The shown stage as a PNG, plus its maps.
 pub(super) fn export_stage(frames: &[Rgba], stage: usize, relief: f32) -> Outcome {
     let Some(image) = frames.get(stage) else {
         return Ok("Nothing to export".into());
     };
-    let Some(path) = png_dialog(&format!("mould-stage{}.png", stage + 1)) else {
-        return Ok(CANCELLED.into());
-    };
-    export_with_maps(&path, std::slice::from_ref(image), relief)
+    export(
+        format!("mould-stage{}", stage + 1),
+        std::slice::from_ref(image),
+        relief,
+    )
 }
 
 /// All stages side by side in one row, as a PNG, plus their maps.
@@ -25,85 +28,83 @@ pub(super) fn export_sheet(frames: &[Rgba], relief: f32) -> Outcome {
     if frames.is_empty() {
         return Ok("Nothing to export".into());
     }
-    let Some(path) = png_dialog("mould-sheet.png") else {
-        return Ok(CANCELLED.into());
-    };
-    export_with_maps(&path, frames, relief)
+    export("mould-sheet".into(), frames, relief)
 }
 
-/// Write `frames` side by side to `path`, and next to it, laid out the same way:
+fn export(name: String, frames: &[Rgba], relief: f32) -> Outcome {
+    let (files, max) = encode_with_maps(frames, relief)?;
+    let saved_to = deliver::offer(Bundle {
+        name,
+        extension: "png",
+        kind: "PNG image",
+        files,
+    })?;
+    Ok(format!(
+        "Exported {saved_to} with albedo, height, normal and specular maps (white height = {max:.1} reference px)"
+    ))
+}
+
+/// `frames` side by side as PNG files, all laid out the same way:
 ///
-/// - `<name>-albedo.png`: colour without baked lighting (RGBA);
-/// - `<name>-height.png`: displacement, 16-bit grey, one scale for all frames;
-/// - `<name>-normal.png`: tangent-space normals, OpenGL convention (Y up);
-/// - `<name>-specular.png`: shininess, grey.
-pub(super) fn export_with_maps(path: &Path, frames: &[Rgba], relief: f32) -> Outcome {
+/// - `""`: the picture as painted (RGBA);
+/// - `"-albedo"`: colour without baked lighting (RGBA);
+/// - `"-height"`: displacement, 16-bit grey, one scale for all frames;
+/// - `"-normal"`: tangent-space normals, OpenGL convention (Y up);
+/// - `"-specular"`: shininess, grey.
+///
+/// Also returns the height that white stands for, in reference pixels.
+pub(super) fn encode_with_maps(
+    frames: &[Rgba],
+    relief: f32,
+) -> Result<(Vec<NamedFile>, f32), String> {
     let side = frames[0].side;
     let count = frames.len();
     let (width, height) = ((side * count) as u32, side as u32);
     let layout = |images: Vec<Vec<u8>>, channels: usize| grid(&images, side, channels, count);
+    let png = |data: &[u8], color: ExtendedColorType| encode_png(data, width, height, color);
 
-    write_png(path, &sheet(frames, count), width, height, ColorType::Rgba8)?;
+    let lit = png(&sheet(frames, count), ExtendedColorType::Rgba8)?;
 
     let albedo = frames.iter().map(Rgba::albedo_rgba8).collect();
-    write_png(
-        &sibling(path, "albedo"),
-        &layout(albedo, 4),
-        width,
-        height,
-        ColorType::Rgba8,
-    )?;
+    let albedo = png(&layout(albedo, 4), ExtendedColorType::Rgba8)?;
 
     let max = frames.iter().map(max_height).fold(1e-3, f32::max);
     let heights: Vec<Vec<u16>> = frames.iter().map(|frame| height_map(frame, max)).collect();
-    ImageBuffer::<Luma<u16>, Vec<u16>>::from_raw(width, height, grid(&heights, side, 1, count))
-        .expect("grid matches its size")
-        .save(sibling(path, "height"))
-        .map_err(|error| error.to_string())?;
+    // The encoder takes 16-bit samples as native-endian bytes.
+    let height_bytes: Vec<u8> = grid(&heights, side, 1, count)
+        .iter()
+        .flat_map(|sample| sample.to_ne_bytes())
+        .collect();
+    let heights = png(&height_bytes, ExtendedColorType::L16)?;
 
     let normals = frames
         .iter()
         .map(|frame| encode_normals(&normal_map(frame, relief)))
         .collect();
-    write_png(
-        &sibling(path, "normal"),
-        &layout(normals, 3),
-        width,
-        height,
-        ColorType::Rgb8,
-    )?;
+    let normals = png(&layout(normals, 3), ExtendedColorType::Rgb8)?;
 
     let gloss = frames.iter().map(gloss_map).collect();
-    write_png(
-        &sibling(path, "specular"),
-        &layout(gloss, 1),
-        width,
-        height,
-        ColorType::L8,
-    )?;
+    let gloss = png(&layout(gloss, 1), ExtendedColorType::L8)?;
 
-    Ok(format!(
-        "Exported {} with albedo, height, normal and specular maps (white height = {max:.1} reference px)",
-        path.display()
-    ))
+    let files = vec![
+        ("", lit),
+        ("-albedo", albedo),
+        ("-height", heights),
+        ("-normal", normals),
+        ("-specular", gloss),
+    ];
+    Ok((files, max))
 }
 
-/// `dir/name.png` -> `dir/name-<suffix>.png`.
-pub(super) fn sibling(path: &Path, suffix: &str) -> PathBuf {
-    let stem = path
-        .file_stem()
-        .map_or_else(Default::default, |stem| stem.to_string_lossy());
-    path.with_file_name(format!("{stem}-{suffix}.png"))
-}
-
-fn png_dialog(file_name: &str) -> Option<PathBuf> {
-    FileDialog::new()
-        .add_filter("PNG image", &["png"])
-        .set_file_name(file_name)
-        .save_file()
-}
-
-fn write_png(path: &Path, data: &[u8], width: u32, height: u32, color: ColorType) -> Outcome {
-    image::save_buffer(path, data, width, height, color).map_err(|error| error.to_string())?;
-    Ok(format!("Exported {}", path.display()))
+fn encode_png(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    color: ExtendedColorType,
+) -> Result<Vec<u8>, String> {
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(data, width, height, color)
+        .map_err(|error| error.to_string())?;
+    Ok(png)
 }

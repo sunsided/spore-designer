@@ -7,6 +7,7 @@ use super::{ChunkKey, FieldPreview};
 use crate::design::Design;
 use crate::editor::Editor;
 use crate::preview::lighting::shade;
+use crate::work::parallel_map;
 
 impl FieldPreview {
     /// Replace the baked texture of every shown chunk that has its lighting maps by one lit
@@ -35,30 +36,20 @@ impl FieldPreview {
             })
             .collect();
 
-        // One thread per chunk; each chunk is small.
-        let pictures: Vec<Vec<u8>> = std::thread::scope(|scope| {
-            let jobs: Vec<_> = lit
-                .iter()
-                .map(|(_, maps)| {
-                    let light_position = [
-                        light_canvas[0] - maps.image.left as f32,
-                        light_canvas[1] - maps.image.top as f32,
-                    ];
-                    scope.spawn(move || {
-                        shade(
-                            &maps.image,
-                            &maps.normals,
-                            editor.light,
-                            light_position,
-                            height_scale,
-                            1,
-                        )
-                    })
-                })
-                .collect();
-            jobs.into_iter()
-                .map(|job| job.join().expect("relighting panicked"))
-                .collect()
+        // One chunk per thread (where there are threads); each chunk is small.
+        let pictures = parallel_map(lit.iter().map(|(_, maps)| *maps).collect(), |maps| {
+            let light_position = [
+                light_canvas[0] - maps.image.left as f32,
+                light_canvas[1] - maps.image.top as f32,
+            ];
+            shade(
+                &maps.image,
+                &maps.normals,
+                editor.light,
+                light_position,
+                height_scale,
+                1,
+            )
         });
 
         let textures = self.relit.upload(gfx, chunk_side, &pictures);

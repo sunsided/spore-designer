@@ -62,7 +62,7 @@ impl RelitStage {
             return texture;
         }
 
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = crate::work::threads();
         let frame = &frames[stage];
         let normals = self.normals(frames, stage, relief);
         let pixels = shade(

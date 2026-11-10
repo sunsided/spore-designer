@@ -20,18 +20,22 @@ mod fields;
 mod files;
 mod panel;
 mod preview;
+mod work;
 
 use game_toolkit::prelude::*;
 
 use design::View;
 use editor::{Action, Editor};
 use preview::{FieldPreview, PreviewArea, SheetPreview};
+use work::Background;
 
 struct App {
     ui: Ui,
     editor: Editor,
     sheet: SheetPreview,
     field: FieldPreview,
+    /// Painting jobs (threads on the desktop, a per-frame queue in the browser).
+    background: Background,
     /// Right edge of the panel in screen pixels, from the previous frame (the panel is laid
     /// out after the preview is drawn).
     panel_width: f32,
@@ -46,6 +50,7 @@ impl Game for App {
             editor: Editor::new(),
             sheet: SheetPreview::new(),
             field: FieldPreview::new(),
+            background: Background::default(),
             panel_width: 0.0,
             status: String::new(),
         })
@@ -71,10 +76,14 @@ impl Game for App {
     }
 
     fn render(&mut self, ctx: &mut Context, frame: &mut Frame) {
+        self.background.run_queued();
         self.draw_preview(&mut ctx.gfx, frame);
 
         if let Some(action) = self.draw_panel(&mut ctx.gfx, frame) {
             self.status = files::run(action, &mut self.editor, self.sheet.frames());
+        }
+        if let Some(status) = files::poll(&mut self.editor) {
+            self.status = status;
         }
     }
 }
@@ -90,9 +99,12 @@ impl App {
         };
 
         match self.editor.design.view {
-            View::Field => self.field.draw(gfx, frame, &self.editor, area),
+            View::Field => self
+                .field
+                .draw(gfx, frame, &self.editor, area, &mut self.background),
             View::Colony | View::Patch => {
-                self.sheet.update(gfx, &self.editor.design);
+                self.sheet
+                    .update(gfx, &self.editor.design, &mut self.background);
                 self.sheet.draw(gfx, frame, &self.editor, area);
             }
         }
@@ -121,11 +133,16 @@ impl App {
 }
 
 fn main() -> Result<()> {
+    // In the browser the toolkit logs to the console itself.
+    #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
+
     run::<App>(AppConfig {
         title: "Spore Designer".into(),
         width: 1400,
         height: 900,
+        // In the browser, draw into the page's `<canvas id="designer">` (see index.html).
+        canvas_id: cfg!(target_arch = "wasm32").then(|| "designer".into()),
         ..Default::default()
     })
 }

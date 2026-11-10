@@ -26,6 +26,7 @@ use spore_core::CHUNK_CELLS;
 
 use super::{PreviewArea, clear};
 use crate::editor::{Editor, LightMode};
+use crate::work::Background;
 use painting::ChunkPainter;
 use relit_textures::RelitTextures;
 use texture_pool::TexturePool;
@@ -57,6 +58,7 @@ impl FieldPreview {
         frame: &mut Frame,
         editor: &Editor,
         area: PreviewArea,
+        background: &mut Background,
     ) {
         let design = &editor.design;
         let chunk_side = design.size * CHUNK_CELLS;
@@ -83,7 +85,8 @@ impl FieldPreview {
             (view[0] + view[2] * 0.5) / chunk_size,
             (view[1] + view[3] * 0.5) / chunk_size,
         );
-        self.painter.start_missing(&visible, view_center);
+        self.painter
+            .start_missing(&visible, view_center, background);
         let mut shown = self.textures.show(gfx, &visible, &self.painter);
         if lighting {
             self.relight(gfx, editor, origin, chunk_side, &mut shown);

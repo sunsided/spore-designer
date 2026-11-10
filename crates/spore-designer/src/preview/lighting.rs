@@ -6,6 +6,7 @@ use spore_core::Rgba;
 use spore_core::relief::{Normal, PointLight, encode_normals, gloss_map, height_map, relight_rows};
 
 use crate::editor::{LightMode, LightSettings};
+use crate::work::parallel_map;
 
 /// `image` (with its `normals`) as RGBA8, the way `light.mode` shows it (the baked mode is
 /// the lit picture itself and not handled here).
@@ -49,20 +50,21 @@ fn point_light(light: LightSettings, position: [f32; 2]) -> PointLight {
     }
 }
 
-/// Relight a whole image, rows split across `threads` threads.
+/// Relight a whole image, rows split into `threads` bands lit in parallel.
 fn relight(image: &Rgba, normals: &[Normal], light: &PointLight, threads: usize) -> Vec<u8> {
     let side = image.side;
-    let rows_per_thread = side.div_ceil(threads.max(1)).max(1);
-    let mut out = vec![0u8; side * side * 4];
+    let rows_per_band = side.div_ceil(threads.max(1)).max(1);
+    let bands: Vec<_> = (0..side)
+        .step_by(rows_per_band)
+        .map(|first| first..(first + rows_per_band).min(side))
+        .collect();
 
-    std::thread::scope(|scope| {
-        for (index, rows) in out.chunks_mut(rows_per_thread * side * 4).enumerate() {
-            let first = index * rows_per_thread;
-            let last = (first + rows_per_thread).min(side);
-            scope.spawn(move || relight_rows(image, normals, light, first..last, rows));
-        }
-    });
-    out
+    parallel_map(bands, |rows| {
+        let mut band = vec![0u8; rows.len() * side * 4];
+        relight_rows(image, normals, light, rows, &mut band);
+        band
+    })
+    .concat()
 }
 
 /// Opaque grey RGBA8 from grey values.

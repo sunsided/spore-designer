@@ -1,0 +1,9 @@
+# Web build: `task web` serves it locally, `task web:build` writes dist/.
+[build]
+target = "index.html"
+dist = "dist"
+# Relative URLs, so the build works from any sub-path (GitHub Pages serves /<repo>/).
+public_url = "./"
+
+[serve]
+port = 8080

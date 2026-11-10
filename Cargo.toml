@@ -20,3 +20,11 @@ opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# The web build: whole-program optimisation and no symbols for a smaller download, still
+# fully optimised because the browser paints on a single thread.
+[profile.web]
+inherits = "release"
+lto = true
+codegen-units = 1
+strip = true

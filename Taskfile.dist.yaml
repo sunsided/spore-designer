@@ -18,6 +18,18 @@ tasks:
     cmds:
       - cargo build --release {{.CLI_ARGS}}
 
+  web:
+    desc: Serve the web build with live reload on http://localhost:8080 (needs trunk)
+    dir: crates/spore-designer
+    cmds:
+      - trunk serve {{.CLI_ARGS}}
+
+  web:build:
+    desc: Build the web version into crates/spore-designer/dist (needs trunk)
+    dir: crates/spore-designer
+    cmds:
+      - trunk build --release {{.CLI_ARGS}}
+
   test:
     desc: Run the tests
     cmds:
@@ -28,7 +40,7 @@ tasks:
     cmds:
       - cargo fmt --check
       - cargo clippy --all-targets -- -D warnings
-      - cargo check -p spore-core --target wasm32-unknown-unknown
+      - cargo clippy -p spore-designer --target wasm32-unknown-unknown -- -D warnings
 
   check:
     desc: Everything CI would run (lint and tests)

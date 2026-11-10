@@ -5,7 +5,10 @@
 //!
 //! - `files/design_file.rs`: save and load.
 //! - `files/export.rs`: PNG exports with albedo, height, normal and specular maps.
+//! - `files/deliver.rs`: dialogs and disk on the desktop, downloads and the file picker in
+//!   the browser.
 
+mod deliver;
 mod design_file;
 mod export;
 
@@ -13,7 +16,7 @@ use spore_core::Rgba;
 
 use crate::design::View;
 use crate::editor::{Action, Editor};
-use design_file::{load, save};
+use design_file::{apply_picked, load, save};
 use export::{export_sheet, export_stage};
 
 /// Run `action` on the editor; `frames` are the stages currently shown (for exports).
@@ -32,6 +35,13 @@ pub fn run(action: Action, editor: &mut Editor, frames: &[Rgba]) -> String {
         Action::ExportSheet => export_sheet(frames, editor.design.relief),
     };
     result.unwrap_or_else(|error| format!("Error: {error}"))
+}
+
+/// Collect anything a file operation delivers later (a design picked in the browser). Call
+/// once per frame; returns the message to show, if something happened.
+pub fn poll(editor: &mut Editor) -> Option<String> {
+    let outcome = apply_picked(editor)?;
+    Some(outcome.unwrap_or_else(|error| format!("Error: {error}")))
 }
 
 type Outcome = Result<String, String>;

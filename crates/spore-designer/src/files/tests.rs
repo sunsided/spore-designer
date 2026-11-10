@@ -1,7 +1,7 @@
 use image::ColorType;
 use spore_core::{Field, Patch, presets, sheet};
 
-use super::export::{export_with_maps, sibling};
+use super::export::encode_with_maps;
 use crate::design::{Design, View};
 
 #[test]
@@ -23,25 +23,32 @@ fn design_file_and_png_roundtrip() {
     let side = frames[0].side;
     assert!(side >= 32, "frames are at least one cell");
 
-    let directory = std::env::temp_dir().join(format!("spore-export-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    let path = directory.join("sheet.png");
-    export_with_maps(&path, &frames, design.relief).unwrap();
+    let (files, _) = encode_with_maps(&frames, design.relief).unwrap();
+    let decode = |suffix: &str| {
+        let (_, png) = files.iter().find(|(name, _)| *name == suffix).unwrap();
+        image::load_from_memory(png).unwrap()
+    };
 
-    let lit = image::open(&path).unwrap().into_rgba8();
+    let lit = decode("").into_rgba8();
     assert_eq!(lit.dimensions(), (side as u32 * 3, side as u32));
     assert_eq!(lit.as_raw(), &sheet(&frames, 3));
     for (suffix, color) in [
-        ("albedo", ColorType::Rgba8),
-        ("height", ColorType::L16),
-        ("normal", ColorType::Rgb8),
-        ("specular", ColorType::L8),
+        ("-albedo", ColorType::Rgba8),
+        ("-height", ColorType::L16),
+        ("-normal", ColorType::Rgb8),
+        ("-specular", ColorType::L8),
     ] {
-        let map = image::open(sibling(&path, suffix)).unwrap();
+        let map = decode(suffix);
         assert_eq!(
             (map.width(), map.height(), map.color()),
             (lit.width(), lit.height(), color)
         );
     }
-    std::fs::remove_dir_all(&directory).ok();
+
+    // 16-bit heights survive the trip: the tallest point is white.
+    let heights = decode("-height").into_luma16();
+    assert_eq!(
+        heights.pixels().map(|pixel| pixel.0[0]).max(),
+        Some(u16::MAX)
+    );
 }

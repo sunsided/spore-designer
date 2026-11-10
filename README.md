@@ -27,8 +27,14 @@ write those maps next to the picture (`-albedo`, 16-bit `-height`, OpenGL `-norm
 `-specular`), ready for real-time lighting in a game.
 
 ```sh
-task run      # or: cargo run --release -p spore-designer
-task check    # fmt, clippy, wasm check of the core, tests
+task run        # or: cargo run --release -p spore-designer
+task web        # the browser version on http://localhost:8080 (needs trunk)
+task web:build  # the browser version into crates/spore-designer/dist
+task check      # fmt, clippy (desktop and web), tests
 ```
+
+The browser version is the same app built for WebAssembly. Browsers give it no threads, so
+painting runs in small slices between frames and pictures fill in progressively; Save and
+Export become downloads. `.github/workflows/pages.yml` publishes it on GitHub Pages.
 
 On Linux the toolkit's audio and gamepad crates need `libasound2-dev libdbus-1-dev libudev-dev`.

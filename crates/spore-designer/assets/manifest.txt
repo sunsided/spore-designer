@@ -1,0 +1,2 @@
+# Files the web build preloads before the app starts (one path per line, relative to assets/).
+# The designer paints everything itself, so there are none.

@@ -16,6 +16,7 @@ use spore_core::{Rgba, crop, render_chunk_with_margin, stage_growth};
 
 use super::ChunkKey;
 use crate::design::Design;
+use crate::work::Background;
 
 /// Painted chunks kept in memory before off-screen ones are dropped.
 const CACHE_BYTES: usize = 192 << 20;
@@ -74,7 +75,8 @@ impl ChunkPainter {
             cached_bytes: 0,
             pending: HashSet::new(),
             busy: 0,
-            max_workers: std::thread::available_parallelism().map_or(4, |n| n.get()),
+            // In the browser chunks wait in the frame queue; a few queued keep it busy.
+            max_workers: crate::work::threads().max(4),
             results: channel(),
         }
     }
@@ -149,7 +151,12 @@ impl ChunkPainter {
 
     /// Start workers for visible chunks that are neither painted nor in progress, nearest
     /// to `view_center` (in chunks) first, as long as workers are free.
-    pub fn start_missing(&mut self, visible: &[ChunkKey], view_center: (f32, f32)) {
+    pub fn start_missing(
+        &mut self,
+        visible: &[ChunkKey],
+        view_center: (f32, f32),
+        background: &mut Background,
+    ) {
         let Some(design) = self.design.clone() else {
             return;
         };
@@ -172,7 +179,7 @@ impl ChunkPainter {
                 self.generation,
                 self.with_maps,
             );
-            std::thread::spawn(move || {
+            background.spawn(move || {
                 let painted = paint_chunk(&design, chunk, with_maps);
                 // The preview may be gone by now; nothing to do then.
                 let _ = results.send((generation, chunk, painted));
