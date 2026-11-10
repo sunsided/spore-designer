@@ -21,6 +21,35 @@ pub struct Editor {
     /// Field view auto-pan: pixels per second, and direction in degrees (0 = right, 90 = up).
     pub pan_speed: f32,
     pub pan_angle: f32,
+    /// How the big stage in the colony and patch views is lit or shown.
+    pub light: LightSettings,
+    /// Last mouse position over the preview, screen pixels (the cursor light follows it).
+    pub cursor: Option<[f32; 2]>,
+}
+
+/// What the big stage shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightMode {
+    /// As painted, with Sporagon's fixed light from the top right.
+    Baked,
+    /// The albedo relit by a point light following the mouse.
+    Cursor,
+    /// The maps themselves.
+    Albedo,
+    Height,
+    Normals,
+    Gloss,
+}
+
+/// The cursor light and the map view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightSettings {
+    pub mode: LightMode,
+    /// Light height above the ground, reference pixels.
+    pub height: f32,
+    pub ambient: f32,
+    pub specular: f32,
+    pub shininess: f32,
 }
 
 /// File operations the panel asks for; run after the panel is drawn (see `files.rs`).
@@ -43,6 +72,14 @@ impl Editor {
             camera: [0.0, 0.0],
             pan_speed: 40.0,
             pan_angle: 20.0,
+            light: LightSettings {
+                mode: LightMode::Baked,
+                height: 30.0,
+                ambient: 0.25,
+                specular: 1.0,
+                shininess: 60.0,
+            },
+            cursor: None,
         }
     }
 

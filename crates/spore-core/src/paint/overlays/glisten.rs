@@ -1,5 +1,6 @@
 //! Wet look: a glossy sheen on the side of the colony facing the light, and a few beads of
-//! clear liquid.
+//! clear liquid. The sheen is pure lighting (the specular map carries the wetness instead);
+//! the beads are real bumps with their own shadow and highlight.
 
 use std::f32::consts::TAU;
 
@@ -43,7 +44,7 @@ fn paint_sheen(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
             );
             let sheen =
                 half.max(0.0).powf(glisten.power) * glisten.sheen * smooth(0.3, 0.7, breakup);
-            canvas.paint_over(x, y, [250.0, 252.0, 240.0], sheen);
+            canvas.paint_light(x, y, [250.0, 252.0, 240.0], sheen);
         }
     }
 }
@@ -62,8 +63,10 @@ fn paint_beads(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
             rng.range(0.9, 2.0),
         );
 
-        brush.disc(canvas, x + 0.7, y + 0.9, radius, [20.0, 24.0, 18.0], 0.3);
+        brush.light_disc(canvas, x + 0.7, y + 0.9, radius, [20.0, 24.0, 18.0], 0.3);
         brush.disc(canvas, x, y, radius, [210.0, 220.0, 205.0], 0.35);
-        brush.dot(canvas, x + radius * 0.35, y - radius * 0.45, WHITE, 1.0);
+        brush.bump(canvas, x, y, radius, radius * 0.6);
+        brush.gloss_disc(canvas, x, y, radius, 1.0);
+        brush.light_dot(canvas, x + radius * 0.35, y - radius * 0.45, WHITE, 1.0);
     }
 }

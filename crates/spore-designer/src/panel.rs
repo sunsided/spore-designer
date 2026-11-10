@@ -2,7 +2,7 @@
 //! the changed design on their own.
 //!
 //! [`show`] draws the panel top to bottom: file buttons, presets, seed and size, playback,
-//! view settings, then every mould value (listed in `fields.rs`, drawn by
+//! view settings, light and maps, then every mould value (listed in `fields.rs`, drawn by
 //! `panel/egui_form.rs`).
 
 mod egui_form;
@@ -11,8 +11,8 @@ use game_toolkit::prelude::egui;
 use spore_core::presets;
 
 use crate::design::View;
-use crate::editor::{Action, Editor};
-use crate::fields::{self, Form, SIZES, STAGES};
+use crate::editor::{Action, Editor, LightMode};
+use crate::fields::{self, Form, RELIEF, SIZES, STAGES};
 use egui_form::EguiForm;
 
 /// Draw the whole panel. Returns the file operation the user asked for, if any; `status`
@@ -29,6 +29,7 @@ pub fn show(ui: &mut egui::Ui, editor: &mut Editor, status: &str) -> Option<Acti
     let mut form = EguiForm { ui };
     form.color("background", &mut editor.background);
     view_settings(&mut form, editor);
+    light_settings(&mut form, editor);
     form.ui.separator();
 
     fields::mold(&mut form, &mut editor.design.mold);
@@ -140,4 +141,40 @@ fn view_settings(form: &mut EguiForm<'_>, editor: &mut Editor) {
             form.ui.small("Drag the preview to move around.");
         }
     }
+}
+
+/// What the big stage shows (lit as painted, by the cursor light, or as one of the maps),
+/// the cursor light's settings, and the relief strength used for normals and exports.
+fn light_settings(form: &mut EguiForm<'_>, editor: &mut Editor) {
+    if editor.design.view == View::Field {
+        return;
+    }
+    let light = &mut editor.light;
+    form.ui.horizontal_wrapped(|ui| {
+        ui.label("Show:");
+        for (mode, label) in [
+            (LightMode::Baked, "Baked"),
+            (LightMode::Cursor, "Cursor light"),
+            (LightMode::Albedo, "Albedo"),
+            (LightMode::Height, "Height"),
+            (LightMode::Normals, "Normals"),
+            (LightMode::Gloss, "Specular"),
+        ] {
+            ui.selectable_value(&mut light.mode, mode, label);
+        }
+    });
+
+    if light.mode == LightMode::Cursor {
+        form.float("light height", &mut light.height, 2.0..=120.0);
+        form.float("ambient", &mut light.ambient, 0.0..=1.0);
+        form.float("specular", &mut light.specular, 0.0..=3.0);
+        form.float("shininess", &mut light.shininess, 1.0..=200.0);
+        form.ui
+            .small("The light follows the mouse over the preview.");
+    }
+    form.float(
+        "relief (normal strength)",
+        &mut editor.design.relief,
+        RELIEF,
+    );
 }

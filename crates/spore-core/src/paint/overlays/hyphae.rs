@@ -7,6 +7,9 @@ use crate::Rgba;
 use crate::math::scale;
 use crate::paint::brush::ColonyBrush;
 
+/// Height a strand adds where it passes, reference pixels (overlapping strands stack up).
+const RELIEF: f32 = 0.15;
+
 /// Strand step length, reference pixels.
 const STEP: f32 = 0.7;
 
@@ -47,12 +50,12 @@ pub(super) fn paint(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
                 } else {
                     hyphae.alpha
                 };
-                canvas.paint_over(
+                let (canvas_x, canvas_y) = (
                     (x * brush.scale).floor() as i32,
                     (y * brush.scale).floor() as i32,
-                    color,
-                    alpha,
                 );
+                canvas.paint_over(canvas_x, canvas_y, color, alpha);
+                canvas.raise(canvas_x, canvas_y, alpha * RELIEF);
             }
             walked += STEP;
         }

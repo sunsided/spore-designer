@@ -20,9 +20,11 @@ pub(super) fn paint(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
         );
         let radius = rng.range(drops.size_min, drops.size_max.max(drops.size_min));
 
-        brush.disc(canvas, x + 0.6, y + 0.8, radius, [40.0, 50.0, 30.0], 0.5);
+        brush.light_disc(canvas, x + 0.6, y + 0.8, radius, [40.0, 50.0, 30.0], 0.5);
         brush.disc(canvas, x, y, radius, drops.rgb, 1.0);
-        brush.dot(
+        brush.bump(canvas, x, y, radius, radius * 0.8);
+        brush.gloss_disc(canvas, x, y, radius, 0.95);
+        brush.light_dot(
             canvas,
             x + radius * 0.4,
             y - radius * 0.5,

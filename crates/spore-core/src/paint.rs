@@ -69,6 +69,7 @@ fn paint_scene(
     slime_cutoff: Option<f32>,
     canvas: &mut Rgba,
 ) {
+    canvas.scale = scale;
     if design.slime.enabled {
         let balls = slime::puddles(&design.slime, colonies);
         slime::paint(&design.slime, &balls, scale, slime_cutoff, canvas);

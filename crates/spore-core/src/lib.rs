@@ -8,7 +8,10 @@
 //! - **How pixels are made:** `paint.rs` explains the painting order and holds the three
 //!   views ([`render`], [`render_patch`] / [`PatchLayout`], [`render_chunk`]); each layer
 //!   lives in `paint/` (`slime`, `body`, `overlays/`).
-//! - **The image type:** `canvas.rs` ([`Rgba`]); sprite sheets in `sheet.rs`.
+//! - **The image type:** `canvas.rs` ([`Rgba`]: lit picture, albedo, height, gloss);
+//!   sprite sheets in `sheet.rs`.
+//! - **Maps for real-time lighting:** `relief.rs` (normal, height and specular maps) and
+//!   `relief/light.rs` (relighting with a point light).
 //! - **Building blocks:** `noise.rs` (hash, value noise, fbm, RNG) and `math.rs` (blends,
 //!   smoothstep, hue shift).
 
@@ -18,12 +21,13 @@ pub mod noise;
 mod paint;
 pub mod params;
 pub mod presets;
+pub mod relief;
 mod sheet;
 
 pub use canvas::Rgba;
 pub use paint::PatchLayout;
 pub use params::*;
-pub use sheet::sheet;
+pub use sheet::{grid, sheet};
 
 /// Side length, in pixels, of the sprite the parameters were tuned on (Sporagon's `SPR`).
 /// Lengths in a design are measured in this sprite's pixels ("reference pixels").

@@ -112,14 +112,21 @@ pub(super) fn paint(
                 continue;
             }
 
-            if let Some((color, alpha)) = shading::shade(
+            if let Some(film) = shading::shade(
                 slime,
                 local_balls,
                 cutoff,
                 (x, y),
                 (reference_x, reference_y),
             ) {
-                canvas.paint_over(x, y, color, alpha);
+                canvas.paint_split(
+                    x,
+                    y,
+                    (film.lit, film.lit_alpha),
+                    (film.albedo, film.albedo_alpha),
+                );
+                canvas.lift(x, y, film.height);
+                canvas.gloss_over(x, y, film.gloss, film.albedo_alpha);
             }
         }
     }

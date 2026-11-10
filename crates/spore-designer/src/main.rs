@@ -57,6 +57,13 @@ impl Game for App {
 
     fn update(&mut self, ctx: &mut Context, seconds: f32) {
         self.editor.advance_playback(seconds);
+
+        // The cursor light follows the mouse while it is over the preview.
+        let (mouse_x, mouse_y) = ctx.input.mouse_pos_window();
+        if mouse_x > self.panel_width {
+            self.editor.cursor = Some([mouse_x, mouse_y]);
+        }
+
         if self.editor.design.view == View::Field {
             self.field
                 .pan(&mut self.editor, &ctx.input, seconds, self.panel_width);

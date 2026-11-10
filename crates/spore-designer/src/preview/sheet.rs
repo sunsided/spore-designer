@@ -1,5 +1,10 @@
 //! Colony and patch preview: every growth stage of the design, painted on a worker thread,
 //! uploaded as one sprite-sheet texture, and drawn as one big stage plus a filmstrip.
+//!
+//! The big stage can also be shown relit by the cursor light or as one of its maps; that
+//! picture is made by `sheet/relit.rs`.
+
+mod relit;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
@@ -8,7 +13,8 @@ use spore_core::{Rgba, sheet};
 
 use super::{PreviewArea, clear};
 use crate::design::Design;
-use crate::editor::Editor;
+use crate::editor::{Editor, LightMode};
+use relit::RelitStage;
 
 /// Share of the window height taken by the filmstrip.
 const FILMSTRIP: f32 = 0.18;
@@ -32,6 +38,8 @@ pub struct SheetPreview {
     /// Workers send finished sheets here.
     results: (Sender<PaintedSheet>, Receiver<PaintedSheet>),
     texture: Option<SheetTexture>,
+    /// The big stage when not shown as painted.
+    relit: RelitStage,
 }
 
 impl SheetPreview {
@@ -42,6 +50,7 @@ impl SheetPreview {
             painting: None,
             results: channel(),
             texture: None,
+            relit: RelitStage::default(),
         }
     }
 
@@ -100,6 +109,7 @@ impl SheetPreview {
                 self.texture = Some(SheetTexture { id, size, columns });
             }
         }
+        self.relit.frames_changed(frames.len());
         self.frames = frames;
         self.painted = Some(design);
     }
@@ -109,10 +119,16 @@ impl SheetPreview {
 
     /// Draw the current stage as large as fits, the cell outline when the mould spills out
     /// of it, and the filmstrip of all stages below.
-    pub fn draw(&self, gfx: &mut Graphics, frame: &mut Frame, editor: &Editor, area: PreviewArea) {
-        let mut painter = frame.painter(gfx);
-        clear(&mut painter, editor.background);
+    pub fn draw(
+        &mut self,
+        gfx: &mut Graphics,
+        frame: &mut Frame,
+        editor: &Editor,
+        area: PreviewArea,
+    ) {
         let (Some(texture), Some(design)) = (&self.texture, &self.painted) else {
+            let mut painter = frame.painter(gfx);
+            clear(&mut painter, editor.background);
             return;
         };
 
@@ -127,7 +143,26 @@ impl SheetPreview {
             area.left + (area.width - side) * 0.5,
             (main_height - side) * 0.5,
         ];
-        draw_stage(&mut painter, texture, frame_side, stage, position, side);
+
+        // Relit or map view: made (and uploaded) before drawing starts.
+        let relit = (editor.light.mode != LightMode::Baked).then(|| {
+            let light_position = light_over_frame(editor.cursor, position, side, frame_side);
+            self.relit.update(
+                gfx,
+                &self.frames,
+                stage,
+                editor.light,
+                design.relief,
+                light_position,
+            )
+        });
+
+        let mut painter = frame.painter(gfx);
+        clear(&mut painter, editor.background);
+        match relit {
+            Some(relit) => painter.sprite(relit, position, [side, side]),
+            None => draw_stage(&mut painter, texture, frame_side, stage, position, side),
+        }
         if frame_side > design.size {
             let cell = side * design.size as f32 / frame_side as f32;
             draw_cell_outline(&mut painter, position, side, cell);
@@ -143,6 +178,24 @@ impl SheetPreview {
             area,
             band,
         );
+    }
+}
+
+/// Where the cursor light hangs over the frame, frame pixels: under the mouse, or over the
+/// top-left quarter until the mouse has been over the preview.
+fn light_over_frame(
+    cursor: Option<[f32; 2]>,
+    position: [f32; 2],
+    side: f32,
+    frame_side: usize,
+) -> [f32; 2] {
+    let frame_size = frame_side as f32;
+    match cursor {
+        Some([x, y]) => [
+            (x - position[0]) / side * frame_size,
+            (y - position[1]) / side * frame_size,
+        ],
+        None => [frame_size * 0.25; 2],
     }
 }
 

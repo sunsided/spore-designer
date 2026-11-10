@@ -68,8 +68,28 @@ impl<'a> ColonyBrush<'a> {
         );
     }
 
-    /// One reference pixel at reference position `(x, y)`: a single canvas pixel at small
-    /// scales, a round dot of the same size when magnified.
+    /// Anti-aliased disc of pure lighting (a cast shadow) at reference position `(x, y)`;
+    /// only the lit picture changes, not the albedo.
+    pub fn light_disc(
+        &self,
+        canvas: &mut Rgba,
+        x: f32,
+        y: f32,
+        radius: f32,
+        color: [f32; 3],
+        alpha: f32,
+    ) {
+        canvas.fill_light_disc(
+            x * self.scale,
+            y * self.scale,
+            radius * self.scale,
+            color,
+            alpha,
+        );
+    }
+
+    /// One reference pixel of surface colour at reference position `(x, y)`: a single canvas
+    /// pixel at small scales, a round dot of the same size when magnified.
     pub fn dot(&self, canvas: &mut Rgba, x: f32, y: f32, color: [f32; 3], alpha: f32) {
         if self.scale <= 1.5 {
             canvas.paint_over(
@@ -87,6 +107,40 @@ impl<'a> ColonyBrush<'a> {
                 alpha,
             );
         }
+    }
+
+    /// Like [`Self::dot`], but pure lighting (a highlight): only the lit picture changes.
+    pub fn light_dot(&self, canvas: &mut Rgba, x: f32, y: f32, color: [f32; 3], alpha: f32) {
+        if self.scale <= 1.5 {
+            canvas.paint_light(
+                (x * self.scale).floor() as i32,
+                (y * self.scale).floor() as i32,
+                color,
+                alpha,
+            );
+        } else {
+            canvas.fill_light_disc(
+                x * self.scale,
+                y * self.scale,
+                0.5 * self.scale,
+                color,
+                alpha,
+            );
+        }
+    }
+
+    // --------------------------------------------------------------------------------------
+    // Height in reference pixels
+
+    /// A disc of shininess `gloss` (`0..1`) at reference position `(x, y)`.
+    pub fn gloss_disc(&self, canvas: &mut Rgba, x: f32, y: f32, radius: f32, gloss: f32) {
+        canvas.gloss_disc(x * self.scale, y * self.scale, radius * self.scale, gloss);
+    }
+
+    /// A hemisphere `peak` reference pixels high and `radius` reference pixels wide at
+    /// reference position `(x, y)`, added on top of what is there.
+    pub fn bump(&self, canvas: &mut Rgba, x: f32, y: f32, radius: f32, peak: f32) {
+        canvas.raise_dome(x * self.scale, y * self.scale, radius * self.scale, peak);
     }
 }
 

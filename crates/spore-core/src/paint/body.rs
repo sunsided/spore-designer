@@ -147,22 +147,30 @@ impl Pass<'_> {
         let normalized_radius = (1.0 + melded_distance / edge_distance).max(0.0);
 
         if normalized_radius < 1.0 {
-            // Inside: blend every colony's surface colour and coverage.
-            let (mut color, mut alpha) = ([0.0; 3], 0.0);
+            // Inside: blend every colony's surface by its share.
+            let blend = |sum: [f32; 3], color: [f32; 3], share: f32| {
+                [
+                    sum[0] + color[0] * share,
+                    sum[1] + color[1] * share,
+                    sum[2] + color[2] * share,
+                ]
+            };
+            let (mut lit, mut albedo) = ([0.0; 3], [0.0; 3]);
+            let (mut alpha, mut height, mut gloss) = (0.0, 0.0, 0.0);
             for (body, sample) in samples {
                 let share = weight(sample) / total_weight;
                 if share > 0.0 {
-                    let (body_color, body_alpha) =
-                        body.surface(&self.gradient, x, y, sample, normalized_radius);
-                    color = [
-                        color[0] + body_color[0] * share,
-                        color[1] + body_color[1] * share,
-                        color[2] + body_color[2] * share,
-                    ];
-                    alpha += body_alpha * share;
+                    let surface = body.surface(&self.gradient, x, y, sample, normalized_radius);
+                    lit = blend(lit, surface.lit, share);
+                    albedo = blend(albedo, surface.albedo, share);
+                    alpha += surface.alpha * share;
+                    height += surface.height * share;
+                    gloss += surface.gloss * share;
                 }
             }
-            canvas.paint_over(x, y, color, alpha);
+            canvas.paint_over_split(x, y, lit, albedo, alpha);
+            canvas.lift(x, y, height);
+            canvas.gloss_over(x, y, gloss, alpha);
         } else if self.design.fringe.enabled && normalized_radius < 1.0 + self.design.fringe.width {
             // Just outside: the fuzzy fringe, blended the same way.
             let alpha: f32 = samples
@@ -172,6 +180,7 @@ impl Pass<'_> {
                 })
                 .sum();
             canvas.paint_over(x, y, self.design.fringe.rgb, alpha);
+            canvas.lift(x, y, alpha * surface::FRINGE_RELIEF);
         }
     }
 }

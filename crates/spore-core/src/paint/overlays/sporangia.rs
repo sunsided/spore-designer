@@ -8,6 +8,9 @@ use crate::Rgba;
 use crate::math::mix;
 use crate::paint::brush::ColonyBrush;
 
+/// How high a stalk lifts its spore head, reference pixels.
+const STALK_HEIGHT: f32 = 1.5;
+
 pub(super) fn paint(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
     let sporangia = &brush.design.sporangia;
     let growth = brush.growth;
@@ -39,14 +42,17 @@ pub(super) fn paint(brush: &ColonyBrush<'_>, canvas: &mut Rgba) {
         }
 
         // Shadow, head, highlight.
-        brush.disc(canvas, x + 1.2, y + 1.5, radius, [50.0, 48.0, 44.0], 0.35);
+        brush.light_disc(canvas, x + 1.2, y + 1.5, radius, [50.0, 48.0, 44.0], 0.35);
         let head = if ripe {
             sporangia.ripe
         } else {
             sporangia.unripe
         };
         brush.disc(canvas, x, y, radius, head, 1.0);
-        brush.dot(
+        // The head stands on its stalk: a sphere lifted by the stalk's height.
+        brush.bump(canvas, x, y, radius, radius + STALK_HEIGHT);
+        brush.gloss_disc(canvas, x, y, radius, if ripe { 0.5 } else { 0.3 });
+        brush.light_dot(
             canvas,
             x + radius * 0.35,
             y - radius * 0.45,

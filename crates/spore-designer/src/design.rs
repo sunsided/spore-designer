@@ -30,6 +30,13 @@ pub struct Design {
     pub patch: Patch,
     #[serde(default)]
     pub field: Field,
+    /// Normal-map strength: 1 = true slopes, more exaggerates the relief.
+    #[serde(default = "unit_relief")]
+    pub relief: f32,
+}
+
+fn unit_relief() -> f32 {
+    1.0
 }
 
 impl Default for Design {
@@ -42,6 +49,7 @@ impl Default for Design {
             view: View::Colony,
             patch: Patch::default(),
             field: Field::default(),
+            relief: 1.0,
         }
     }
 }

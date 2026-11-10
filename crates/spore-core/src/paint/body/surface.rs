@@ -4,6 +4,10 @@
 //! [`ColonyBody::surface`] is a pipeline; each step adjusts the colour from the one before:
 //! gradient, growth rings, dust, fluff, age and youth, colour drift, lighting (dome, furrows,
 //! grain), specks. The parameters for each step are in `params/surface.rs`.
+//!
+//! The lit colour includes the dome shading from the fixed light; the albedo keeps only
+//! furrows and grain (they darken crevices whatever the light). The same dome, furrows, fluff
+//! and grain also shape the height map.
 
 use super::ColonyBody;
 use super::outline::EdgeSample;
@@ -12,9 +16,28 @@ use crate::noise::{fbm, hash};
 use crate::paint::lighting::dome;
 use crate::params::{ColorStop, Rgb, sample};
 
+/// Dome height at the centre of a colony, as a fraction of its radius.
+const DOME_RELIEF: f32 = 0.25;
+/// Height of fluff and grain texture, reference pixels per unit of noise.
+const FLUFF_RELIEF: f32 = 1.2;
+const GRAIN_RELIEF: f32 = 0.6;
+/// Fringe hairs stand this high where the fringe is dense, reference pixels.
+pub(super) const FRINGE_RELIEF: f32 = 0.4;
+
+/// Everything a body paints at one pixel.
+pub(super) struct BodySample {
+    pub lit: Rgb,
+    pub albedo: Rgb,
+    pub alpha: f32,
+    /// Surface height, reference pixels.
+    pub height: f32,
+    /// Shininess `0..1`.
+    pub gloss: f32,
+}
+
 impl ColonyBody<'_> {
-    /// Body colour and coverage at canvas pixel `(x, y)`, given the melded mass's normalised
-    /// radius there (0 centre, 1 edge).
+    /// The body at canvas pixel `(x, y)`, given the melded mass's normalised radius there
+    /// (0 centre, 1 edge).
     pub(super) fn surface(
         &self,
         gradient: &[ColorStop],
@@ -22,7 +45,7 @@ impl ColonyBody<'_> {
         y: i32,
         edge: &EdgeSample,
         normalized_radius: f32,
-    ) -> (Rgb, f32) {
+    ) -> BodySample {
         let brush = &self.brush;
         let (design, seed, growth) = (brush.design, brush.seed, brush.growth);
         let body = &design.body;
@@ -86,7 +109,9 @@ impl ColonyBody<'_> {
             seed + 11,
             2,
         );
-        let brightness = lerp(
+        let furrow_shade = 1.0 - furrows.depth * furrow * (nr * 2.0).min(1.0) * growth;
+        let grain_shade = 1.0 - lighting.grain * 0.5 + lighting.grain * grain;
+        let dome_shade = lerp(
             1.0,
             dome(
                 edge.dx / edge.edge_distance,
@@ -94,22 +119,51 @@ impl ColonyBody<'_> {
                 nr,
             ),
             lighting.dome,
-        ) * (1.0 - furrows.depth * furrow * (nr * 2.0).min(1.0) * growth)
-            * (1.0 - lighting.grain * 0.5 + lighting.grain * grain);
-        color = scale(color, brightness);
+        );
+        let mut albedo = scale(color, furrow_shade * grain_shade);
+        color = scale(color, dome_shade * furrow_shade * grain_shade);
 
         // Specks: single pixels brightened or darkened, one canvas pixel big at any size.
         let specks = &design.specks;
         let speck = hash(x, y, seed + 3);
-        if nr < specks.extent && speck > 1.0 - specks.amount {
-            color = scale(color, specks.bright);
+        let speck_factor = if nr < specks.extent && speck > 1.0 - specks.amount {
+            Some(specks.bright)
         } else if nr < specks.extent && speck < specks.amount * 0.7 {
-            color = scale(color, specks.dark);
+            Some(specks.dark)
+        } else {
+            None
+        };
+        if let Some(factor) = speck_factor {
+            color = scale(color, factor);
+            albedo = scale(albedo, factor);
         }
 
         // Coverage: solid velvet, or cotton thinning towards the edge where the fluff is thin.
         let cotton = smooth(0.08, 0.4, (1.0 - nr * nr) * (0.45 + 0.9 * fluff));
-        (color, lerp(1.0, cotton, body.softness))
+        let alpha = lerp(1.0, cotton, body.softness);
+
+        // Height: a dome sunk along the furrows, roughened by fluff (on cotton) and grain,
+        // tapering where cotton coverage thins.
+        let dome_height = brush.radius * DOME_RELIEF * (1.0 - nr * nr).max(0.0).sqrt();
+        let texture_height = body.softness * (fluff - 0.5) * FLUFF_RELIEF
+            + lighting.grain * (grain - 0.5) * GRAIN_RELIEF;
+        let height = ((dome_height * furrow_shade + texture_height) * alpha).max(0.0);
+
+        // Gloss: velvet is dull, cotton duller; a glistening colony is wet.
+        let glisten = &design.glisten;
+        let wetness = if glisten.enabled {
+            0.45 * glisten.sheen
+        } else {
+            0.0
+        };
+
+        BodySample {
+            lit: color,
+            albedo,
+            alpha,
+            height,
+            gloss: lerp(0.12, 0.04, body.softness) + wetness,
+        }
     }
 
     /// Fringe coverage at canvas pixel `(x, y)`, at normalised radius `normalized_radius`

@@ -23,6 +23,9 @@ use randomizer::Randomizer;
 pub const SIZES: RangeInclusive<usize> = 32..=512;
 pub const STAGES: RangeInclusive<usize> = 1..=24;
 
+/// Allowed normal-map strengths.
+pub const RELIEF: RangeInclusive<f32> = 0.0..=4.0;
+
 /// Most gradient stops a design may bring along.
 const MAX_STOPS: usize = 16;
 
@@ -49,6 +52,7 @@ pub fn sanitize(design: &mut Design) {
     mold(&mut Clamp, &mut design.mold);
     patch(&mut Clamp, &mut design.patch);
     field(&mut Clamp, &mut design.field);
+    Clamp.float("relief", &mut design.relief, RELIEF);
 }
 
 /// Give every mould value and the seed a uniformly random value in its range. `dice` is the
@@ -314,6 +318,7 @@ mod tests {
                 stagger: -5.0,
             },
             field: Field::default(),
+            relief: f32::NAN,
         };
         design.mold.shape.radius_growth = 100_000.0;
         design.mold.hyphae.length = f32::INFINITY;

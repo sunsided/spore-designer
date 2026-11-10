@@ -14,6 +14,10 @@ use crate::paint::lighting::dome;
 use crate::params::{Rgb, sample, sorted};
 use crate::{REFERENCE_SIZE, Rgba};
 
+/// Cushion height at a rosette's centre, as a fraction of its radius; and its shininess.
+const RELIEF: f32 = 0.15;
+const GLOSS: f32 = 0.25;
+
 /// One rosette, placed and sized for the current growth.
 struct Rosette {
     /// Centre and current radius, reference pixels.
@@ -119,23 +123,33 @@ fn paint_rosette(
                 rosette.seed,
                 2,
             );
-            let brightness = (1.0 - rosettes.rim_dark * smooth(0.6, 1.0, normalized_radius))
-                * lerp(
-                    1.0,
-                    dome(dx / edge, dy / edge, normalized_radius.min(1.0)),
-                    lighting.dome * 0.6,
-                )
-                * (1.0 - lighting.grain * 0.5 + lighting.grain * grain);
+            let rim_shade = 1.0 - rosettes.rim_dark * smooth(0.6, 1.0, normalized_radius);
+            let dome_shade = lerp(
+                1.0,
+                dome(dx / edge, dy / edge, normalized_radius.min(1.0)),
+                lighting.dome * 0.6,
+            );
+            let grain_shade = 1.0 - lighting.grain * 0.5 + lighting.grain * grain;
 
             // Soft, fuzzy rim (output-pixel noise, so it stays fine at any size).
             let fuzz = fbm(x as f32 / 1.3, y as f32 / 1.3, rosette.seed + 7, 2);
-            let alpha = 1.0 - smooth(0.9, 1.05, normalized_radius) * (0.4 + 0.6 * (1.0 - fuzz));
-            canvas.paint_over(
+            let alpha = (1.0 - smooth(0.9, 1.05, normalized_radius) * (0.4 + 0.6 * (1.0 - fuzz)))
+                .max(0.0)
+                * rosettes.alpha;
+            canvas.paint_over_split(
                 x,
                 y,
-                scale(color, brightness),
-                alpha.max(0.0) * rosettes.alpha,
+                scale(color, rim_shade * dome_shade * grain_shade),
+                scale(color, rim_shade * grain_shade),
+                alpha,
             );
+
+            // A low, waxy cushion on top of whatever is below.
+            let cushion = (1.0 - normalized_radius * normalized_radius)
+                .max(0.0)
+                .sqrt();
+            canvas.raise(x, y, alpha * rosette.radius * RELIEF * cushion);
+            canvas.gloss_over(x, y, GLOSS, alpha);
         }
     }
 }
