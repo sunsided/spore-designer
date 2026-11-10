@@ -16,7 +16,9 @@ The colonies above are the four presets, fully grown (`task docs:presets` render
   dependencies; builds for `wasm32-unknown-unknown`.
 - `crates/spore-designer`: desktop editor on [game-toolkit](https://game-toolkit.dev/) + egui.
   Presets, live sliders, "randomize everything", growth playback, RON save/load, PNG and
-  sprite-sheet export.
+  sprite-sheet export. [RON](https://github.com/ron-rs/ron) (Rusty Object Notation) is
+  JSON's idea in Rust syntax: designs are saved as readable text that looks like the
+  structs they come from.
 
 Three views:
 
